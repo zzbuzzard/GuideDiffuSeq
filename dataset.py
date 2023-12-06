@@ -16,15 +16,16 @@ class TextDataset(Dataset):
 
         path = os.path.join(root_path, f"{split}.jsonl")
 
-        def process(text: str):
-            ids = tokenizer(text.strip()).input_ids
+        def process(text: str, is_src: bool):
+            # Only add special tokens to the source, not target
+            ids = tokenizer(text.strip(), add_special_tokens=is_src).input_ids
             return torch.LongTensor(ids)
 
         with open(path, 'r') as f_reader:
             for row in tqdm(f_reader, desc=f"Tokenizing {split} split"):
                 content = json.loads(row)
-                self.src.append(process(content['src']))
-                self.trg.append(process(content['trg']))
+                self.src.append(process(content['src'], True))
+                self.trg.append(process(content['trg'], False))
 
     def __len__(self):
         return len(self.src)
