@@ -12,6 +12,7 @@ import wandb
 from config import TrainingConfig, ModelConfig
 from model import Model, from_config
 from dataset import TextDataset, collate
+from utils import masked_loss, padding_mask
 
 device = torch.device("cuda")
 
@@ -78,8 +79,8 @@ def train_loop(config, model: Model, optimizer, train_dataloader, lr_scheduler):
 
             with accelerator.accumulate(model):
                 ys_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
-                loss = F.mse_loss(ys_emb, ys_pred)  # 'sample' pred version
-                # loss = F.mse_loss(noise_pred, noise)  # 'epsilon' pred version
+                ys_mask = padding_mask(ys_emb, ys_l)
+                loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
                 accelerator.backward(loss)
 
                 accelerator.clip_grad_norm_(model.parameters(), 1.0)

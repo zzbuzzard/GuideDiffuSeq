@@ -1,5 +1,6 @@
 import torch
 from torch_cluster import knn
+import torch.nn.functional as F
 
 
 def padding_mask(xs: torch.Tensor, lengths: torch.LongTensor):
@@ -8,7 +9,7 @@ def padding_mask(xs: torch.Tensor, lengths: torch.LongTensor):
     produces a padding mask of shape (B x S).
     """
     batch_size, max_seq_length, _ = xs.shape
-    return lengths[:, None] < torch.arange(max_seq_length, device=lengths.device)[None]
+    return torch.arange(max_seq_length, device=lengths.device)[None] >= lengths[:, None]
 
 
 def clamp_to_vocab(xs: torch.Tensor, vocab: torch.Tensor):
@@ -22,3 +23,12 @@ def clamp_to_vocab(xs: torch.Tensor, vocab: torch.Tensor):
         return out.reshape((d1, d2))
 
     return knn(vocab, xs, k=1)[1]
+
+
+def masked_loss(goal: torch.Tensor, pred: torch.Tensor, padding_mask: torch.Tensor):
+    """Calculate MSE loss, excluding padding (padding_mask=True indicates padding)"""
+    masked_goal = goal[~padding_mask]
+    masked_pred = pred[~padding_mask]
+    # Calculate MSE loss
+    loss = F.mse_loss(masked_pred, masked_goal)
+    return loss
