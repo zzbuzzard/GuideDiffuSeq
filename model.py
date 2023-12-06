@@ -116,7 +116,7 @@ class Model(nn.Module):
     def load(self, root_path: str):
         path = join(root_path, "model.pt")
         if not os.path.isfile(path):
-            print(f"model.pt not found in {path} - not loading state.")
+            print(f"{path} not found, not loading state.")
         else:
             print("Loading model state from", path)
             self.load_state_dict(torch.load(path))
