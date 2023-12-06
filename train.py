@@ -126,6 +126,13 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
 
                 wandb.log({"samples": log_tbl})
 
+            if epoch % train_config.eval_epochs == 0:
+                print("Evaluating...")
+                out = eval_metric(model, val_dataset, ["BLEU", "ROUGE"], eval_scheduler,
+                                  nsteps=train_config.eval_nsteps, batch_size=train_config.batch_size)
+                print("Metrics:", out)
+                train_data["BLEU_val"][epoch] = out["BLEU"]
+                train_data["ROUGE_val"][epoch] = out["ROUGE"]
 
                 wandb.log({"BLEU_val": out["BLEU"], "ROUGE_val": out["ROUGE"], "step": global_step})
 
