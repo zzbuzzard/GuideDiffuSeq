@@ -5,7 +5,9 @@ from torch import optim
 from accelerate import Accelerator
 from tqdm.auto import tqdm
 import os
-from diffusers import DDPMScheduler, PNDMScheduler, get_cosine_schedule_with_warmup
+from diffusers import DDPMScheduler, DPMSolverMultistepScheduler, get_cosine_schedule_with_warmup
+from dataclasses import asdict
+import wandb
 
 from config import TrainingConfig, ModelConfig
 from model import Model, from_config
@@ -14,23 +16,29 @@ from dataset import TextDataset, collate
 device = torch.device("cuda")
 
 # TODO Load from json or cmd line or something
-model_config = ModelConfig()
-model_config.layers_decoder = 6
-model_config.layers_encoder = 6
-model_config.nhead = 2
-
-# TODO Load from json or cmd line or something
+model_config = ModelConfig(
+    layers_decoder=6,
+    layers_encoder=6,
+    nhead=2
+)
 config = TrainingConfig(
     model_config,
     output_dir="out",
-    data_dir="datasets/QQP"
+    data_dir="datasets/QQP",
+    batch_size=4
 )
-config.batch_size = 2
+
+wandb.init(
+    project="var-len-diffu-seq",
+    name="Initial run",
+    config=asdict(config),
+    tags=["EMBED_MODE"]
+)
 
 
 def train_loop(config, model: Model, optimizer, train_dataloader, lr_scheduler):
-    noise_scheduler = DDPMScheduler(num_train_timesteps=config.model.timesteps)
-    eval_scheduler = PNDMScheduler(num_train_timesteps=config.model.timesteps, prediction_type="epsilon")
+    noise_scheduler = DDPMScheduler(num_train_timesteps=config.model.timesteps, prediction_type="sample")
+    eval_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=config.model.timesteps, prediction_type="sample")
 
     # Initialize accelerator and tensorboard logging
     accelerator = Accelerator(
@@ -69,9 +77,9 @@ def train_loop(config, model: Model, optimizer, train_dataloader, lr_scheduler):
             ys_noised = noise_scheduler.add_noise(ys_emb, noise, timesteps)
 
             with accelerator.accumulate(model):
-                noise_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
-                # loss = F.mse_loss(ys, ys_pred)  # 'sample' pred version
-                loss = F.mse_loss(noise_pred, noise)
+                ys_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
+                loss = F.mse_loss(ys_emb, ys_pred)  # 'sample' pred version
+                # loss = F.mse_loss(noise_pred, noise)  # 'epsilon' pred version
                 accelerator.backward(loss)
 
                 accelerator.clip_grad_norm_(model.parameters(), 1.0)
@@ -79,31 +87,43 @@ def train_loop(config, model: Model, optimizer, train_dataloader, lr_scheduler):
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
-            progress_bar.update(1)
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
+            progress_bar.update(1)
             progress_bar.set_postfix(**logs)
-            accelerator.log(logs, step=global_step)
+            # accelerator.log(logs, step=global_step)
+            wandb.log(logs)
             global_step += 1
 
         # After each epoch you optionally sample some demo images with evaluate() and save the model
         if accelerator.is_main_process:
             if epoch % config.save_model_epochs == 0:
                 # TODO Save model
-                print("Not saving")
+                # print("Not saving")
+                pass
 
             # Show example output on final batch
             if epoch % config.sample_epochs == 0:
                 toks = model.inference(xs_emb, xs_l, ys_l, eval_scheduler, config.eval_nsteps)
+
+                log_tbl = wandb.Table(columns=["Steps", "Input", "Ground Truth", "Output"])
 
                 for ind, t in enumerate(toks):
                     inp = xs_tok[ind][:xs_l[ind]]
                     gt = ys_tok[ind][:ys_l[ind]]
                     out = toks[ind]
 
-                    tqdm.write("INPUT: " + model.tokenizer.decode(inp))
-                    tqdm.write("GT: " + model.tokenizer.decode(gt))
-                    tqdm.write("OUTPUT: " + model.tokenizer.decode(out))
-                    tqdm.write("\n")
+                    inp = model.tokenizer.decode(inp)
+                    gt = model.tokenizer.decode(gt)
+                    out = model.tokenizer.decode(out)
+
+                    log_tbl.add_data(global_step, inp, gt, out)
+
+                    # tqdm.write("INPUT: " + inp)
+                    # tqdm.write("GT: " + gt)
+                    # tqdm.write("OUTPUT: " + out)
+                    # tqdm.write("\n")
+
+                wandb.log({"samples": log_tbl})
 
 
 model = from_config(model_config).to(device)
@@ -127,3 +147,5 @@ train_loop(
     train_dataloader=train_dataloader,
     lr_scheduler=lr_scheduler
 )
+
+wandb.finish()
