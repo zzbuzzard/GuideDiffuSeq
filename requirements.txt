@@ -5,3 +5,4 @@ transformers>=4.34.1
 tqdm
 wandb>=0.15.12
 accelerate
+torch_cluster

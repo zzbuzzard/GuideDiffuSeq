@@ -18,7 +18,7 @@ from dataset import TextDataset, collate
 from utils import masked_loss, padding_mask, load_state, save_state
 from eval import eval_metric
 
-device = torch.device("cuda")
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
 def train_loop(model_dir: str, train_config: TrainingConfig, model_config: ModelConfig, model: Model, optimizer,
