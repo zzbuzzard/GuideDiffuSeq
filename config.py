@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from os import path
+import json
 
 
 @dataclass
@@ -11,18 +13,47 @@ class ModelConfig:
     max_len: int = 128
     timesteps: int = 1000
 
+    @staticmethod
+    def load(root_path: str):
+        """
+        Loads from root_path/config.json.
+        """
+        jsonpath = path.join(root_path, "config.json")
+        assert path.isdir(root_path), f"Model directory '{root_path}' not found!"
+        assert path.isfile(jsonpath), f"config.json not found in directory '{root_path}'."
+
+        with open(jsonpath, "r") as file:
+            data = json.loads(file.read())
+
+        return ModelConfig(**data)
+
 
 @dataclass
 class TrainingConfig:
-    model: ModelConfig
-    output_dir: str
     data_dir: str
-    lr_warmup_steps: int = 100
-    batch_size: int = 16
-    num_epochs: int = 10
+    batch_size: int
+    num_epochs: int
+
+    save_epochs: int
+    eval_epochs: int
+    sample_epochs: int
+
     learning_rate: float = 1e-4
-    save_model_epochs: int = 10
-    sample_epochs: int = 1
-    mixed_precision: str = "fp16"
     eval_nsteps: int = 50
     seed: int = 0
+    mixed_precision: str = "fp16"
+
+    @staticmethod
+    def load(root_path: str):
+        """
+        Loads from root_path/train_config.json.
+        """
+        jsonpath = path.join(root_path, "train_config.json")
+        assert path.isdir(root_path), f"Model directory '{root_path}' not found!"
+        assert path.isfile(jsonpath), f"train_config.json not found in directory '{root_path}'."
+
+        with open(jsonpath, "r") as file:
+            data = json.loads(file.read())
+
+        return TrainingConfig(**data)
+

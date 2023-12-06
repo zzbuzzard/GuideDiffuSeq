@@ -1,3 +1,5 @@
+import os
+from os.path import join
 import torch
 from torch import nn
 from transformers import BertModel, BertTokenizer
@@ -110,6 +112,18 @@ class Model(nn.Module):
         # Trim parts not in the input
         # Note: it is inefficient to compute KNN for the padding, this could be improved
         return [toks[:ys_lengths[i]] for i, toks in enumerate(tokens)]
+
+    def load(self, root_path: str):
+        path = join(root_path, "model.pt")
+        if not os.path.isfile(path):
+            print(f"model.pt not found in {path} - not loading state.")
+        else:
+            print("Loading model state from", path)
+            self.load_state_dict(torch.load(path))
+
+    def save(self, root_path: str):
+        path = join(root_path, "model.pt")
+        torch.save(self.state_dict(), path)
 
 
 def from_config(config: ModelConfig):
