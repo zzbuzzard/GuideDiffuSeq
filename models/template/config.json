@@ -1,0 +1,8 @@
+{
+	"embed_mode": "learned",
+	"dim": 256,
+	"nhead": 8,
+	"layers_encoder": 12,
+	"layers_decoder": 12,
+	"timesteps": 1000
+}

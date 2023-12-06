@@ -1,0 +1,15 @@
+{
+    "data_dir": "datasets/QQP",
+    
+	"batch_size": 64,
+    "num_epochs": 50,
+    "learning_rate": 1e-4,
+
+    "save_epochs": 1,
+    "eval_epochs": 2,
+    "sample_epochs": 2,
+
+    "eval_nsteps": 50,
+    "seed": 0,
+    "mixed_precision": "fp16"
+}
