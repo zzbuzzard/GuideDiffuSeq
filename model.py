@@ -18,6 +18,7 @@ class Model(nn.Module):
 
         # Load BERT tokenizer and embeddings
         if embed_mode == 'bert':
+            assert dim == 768, "When using BERT embeddings, dim must equal 768"
             model = BertModel.from_pretrained(model_name)
             self.embed = model.embeddings.word_embeddings
             del model  # (we do not need the rest of the BERT model)

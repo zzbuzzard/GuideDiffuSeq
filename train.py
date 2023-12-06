@@ -18,23 +18,28 @@ device = torch.device("cuda")
 
 # TODO Load from json or cmd line or something
 model_config = ModelConfig(
-    layers_decoder=6,
-    layers_encoder=6,
-    nhead=2
+    embed_mode="learned",
+    layers_decoder=12,
+    layers_encoder=12,
+    nhead=8,
+    dim=256
 )
 config = TrainingConfig(
     model_config,
     output_dir="out",
     data_dir="datasets/QQP",
-    batch_size=4
+    batch_size=64
 )
-
 wandb.init(
     project="var-len-diffu-seq",
-    name="Initial run",
+    name="Big",
     config=asdict(config),
-    tags=["EMBED_MODE"]
+    # tags=[""]
 )
+
+wandb.define_metric("step")
+wandb.define_metric("loss", step_metric="step")
+wandb.define_metric("lr", step_metric="step")
 
 
 def train_loop(config, model: Model, optimizer, train_dataloader, lr_scheduler):
@@ -58,8 +63,12 @@ def train_loop(config, model: Model, optimizer, train_dataloader, lr_scheduler):
     global_step = 0
 
     for epoch in range(config.num_epochs):
-        progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)
-        progress_bar.set_description(f"Epoch {epoch}")
+        #progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)
+        #progress_bar.set_description(f"Epoch {epoch}")
+        print("Epoch", epoch)
+
+        tot_loss = 0
+        loss_count = 0
 
         for step, (xs_tok, ys_tok, xs_l, ys_l) in enumerate(train_dataloader):
             xs_emb = model.embed(xs_tok)
@@ -88,12 +97,15 @@ def train_loop(config, model: Model, optimizer, train_dataloader, lr_scheduler):
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
-            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
-            progress_bar.update(1)
-            progress_bar.set_postfix(**logs)
-            # accelerator.log(logs, step=global_step)
-            wandb.log(logs)
+            #logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
+            #progress_bar.update(1)
+            #progress_bar.set_postfix(**logs)
             global_step += 1
+
+            tot_loss += loss.detach().item()
+            loss_count += 1
+
+        wandb.log({"loss": tot_loss / loss_count, "lr": lr_scheduler.get_last_lr()[0], "step": global_step})
 
         # After each epoch you optionally sample some demo images with evaluate() and save the model
         if accelerator.is_main_process:
@@ -119,17 +131,17 @@ def train_loop(config, model: Model, optimizer, train_dataloader, lr_scheduler):
 
                     log_tbl.add_data(global_step, inp, gt, out)
 
-                    # tqdm.write("INPUT: " + inp)
-                    # tqdm.write("GT: " + gt)
-                    # tqdm.write("OUTPUT: " + out)
-                    # tqdm.write("\n")
+                    tqdm.write("INPUT: " + inp)
+                    tqdm.write("GT: " + gt)
+                    tqdm.write("OUTPUT: " + out)
+                    tqdm.write("\n")
 
                 wandb.log({"samples": log_tbl})
 
 
 model = from_config(model_config).to(device)
 
-dataset = TextDataset(config.data_dir, split="test", tokenizer=model.tokenizer, device=device)
+dataset = TextDataset(config.data_dir, split="train", tokenizer=model.tokenizer, device=device)
 train_dataloader = dutils.DataLoader(dataset, batch_size=config.batch_size, shuffle=True, collate_fn=collate,
                                      drop_last=True)
 
