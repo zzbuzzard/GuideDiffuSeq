@@ -1,12 +1,8 @@
 import torch
-import torch.nn.functional as F
 import torch.utils.data as dutils
 from torch import optim
 from torch.optim import lr_scheduler
-from accelerate import Accelerator
 from tqdm.auto import tqdm
-import os
-from os.path import join
 from diffusers import DDPMScheduler, DPMSolverMultistepScheduler, get_cosine_schedule_with_warmup
 from dataclasses import asdict
 import wandb
@@ -26,14 +22,6 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
     noise_scheduler = DDPMScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
     eval_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
 
-    # Initialize accelerator and tensorboard logging
-    accelerator = Accelerator(
-        mixed_precision=train_config.mixed_precision,
-        project_dir=join(model_dir, "logs"),
-    )
-    if accelerator.is_main_process:
-        accelerator.init_trackers("train")
-
     start_epoch, train_data = load_state(model_dir, model, optimizer)
     lr_scheduler.last_epoch = start_epoch * len(train_dataloader)
 
@@ -41,10 +29,6 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
     for i in keys:
         if i not in train_data:
             train_data[i] = {}
-
-    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, lr_scheduler
-    )
 
     global_step = start_epoch * len(train_dataloader)
 
@@ -72,16 +56,14 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
             # Add noise
             ys_noised = noise_scheduler.add_noise(ys_emb, noise, timesteps)
 
-            with accelerator.accumulate(model):
-                ys_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
-                ys_mask = padding_mask(ys_emb, ys_l)
-                loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
-                accelerator.backward(loss)
+            ys_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
+            ys_mask = padding_mask(ys_emb, ys_l)
+            loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
+            loss.backward()
 
-                accelerator.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
 
             # logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
             # progress_bar.update(1)
@@ -96,45 +78,44 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
         train_data["lr"][epoch] = lr_scheduler.get_last_lr()[0]
 
         # After each epoch you optionally sample some demo images with evaluate() and save the model
-        if accelerator.is_main_process:
-            if epoch % train_config.save_epochs == 0:
-                save_state(model_dir, model, optimizer, epoch + 1, train_data)
+        if epoch % train_config.save_epochs == 0:
+            save_state(model_dir, model, optimizer, epoch + 1, train_data)
 
-            # Show example output on final batch
-            if epoch % train_config.sample_epochs == 0:
-                mx_num = 8
-                toks = model.inference(xs_emb[:mx_num], xs_l[:mx_num], ys_l[:mx_num], eval_scheduler,
-                                       train_config.eval_nsteps)
+        # Show example output on final batch
+        if epoch % train_config.sample_epochs == 0:
+            mx_num = 8
+            toks = model.inference(xs_emb[:mx_num], xs_l[:mx_num], ys_l[:mx_num], eval_scheduler,
+                                   train_config.eval_nsteps)
 
-                log_tbl = wandb.Table(columns=["Steps", "Input", "Ground Truth", "Output"])
+            log_tbl = wandb.Table(columns=["Steps", "Input", "Ground Truth", "Output"])
 
-                for ind, t in enumerate(toks):
-                    inp = xs_tok[ind][:xs_l[ind]]
-                    gt = ys_tok[ind][:ys_l[ind]]
-                    out = toks[ind]
+            for ind, t in enumerate(toks):
+                inp = xs_tok[ind][:xs_l[ind]]
+                gt = ys_tok[ind][:ys_l[ind]]
+                out = toks[ind]
 
-                    inp = model.tokenizer.decode(inp)
-                    gt = model.tokenizer.decode(gt)
-                    out = model.tokenizer.decode(out)
+                inp = model.tokenizer.decode(inp)
+                gt = model.tokenizer.decode(gt)
+                out = model.tokenizer.decode(out)
 
-                    log_tbl.add_data(global_step, inp, gt, out)
+                log_tbl.add_data(global_step, inp, gt, out)
 
-                    tqdm.write("INPUT: " + inp)
-                    tqdm.write("GT: " + gt)
-                    tqdm.write("OUTPUT: " + out)
-                    tqdm.write("\n")
+                tqdm.write("INPUT: " + inp)
+                tqdm.write("GT: " + gt)
+                tqdm.write("OUTPUT: " + out)
+                tqdm.write("\n")
 
-                wandb.log({"samples": log_tbl})
+            wandb.log({"samples": log_tbl})
 
-            if epoch % train_config.eval_epochs == 0:
-                print("Evaluating...")
-                out = eval_metric(model, val_dataset, ["BLEU", "ROUGE"], eval_scheduler,
-                                  nsteps=train_config.eval_nsteps, batch_size=train_config.batch_size)
-                print("Metrics:", out)
-                train_data["BLEU_val"][epoch] = out["BLEU"]
-                train_data["ROUGE_val"][epoch] = out["ROUGE"]
+        if epoch % train_config.eval_epochs == 0:
+            print("Evaluating...")
+            out = eval_metric(model, val_dataset, ["BLEU", "ROUGE"], eval_scheduler,
+                              nsteps=train_config.eval_nsteps, batch_size=train_config.batch_size)
+            print("Metrics:", out)
+            train_data["BLEU_val"][epoch] = out["BLEU"]
+            train_data["ROUGE_val"][epoch] = out["ROUGE"]
 
-                wandb.log({"BLEU_val": out["BLEU"], "ROUGE_val": out["ROUGE"], "step": global_step})
+            wandb.log({"BLEU_val": out["BLEU"], "ROUGE_val": out["ROUGE"], "step": global_step})
 
 
 if __name__ == "__main__":
