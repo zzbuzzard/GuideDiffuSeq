@@ -1,9 +1,7 @@
-import diffusers.schedulers
 import torch
 from torch import nn
 from transformers import BertModel, BertTokenizer
 import math
-from diffusers import DDIMPipeline
 from diffusers.schedulers import SchedulerMixin
 from tqdm import tqdm
 
@@ -12,15 +10,22 @@ from config import ModelConfig
 
 
 class Model(nn.Module):
-    def __init__(self, dim: int, nhead: int, layers_encoder: int, layers_decoder: int, max_len: int):
+    def __init__(self, embed_mode: str, dim: int, nhead: int, layers_encoder: int, layers_decoder: int, max_len: int):
         super().__init__()
 
-        # Load BERT tokenizer and embeddings
         model_name = 'bert-base-uncased'
         self.tokenizer = BertTokenizer.from_pretrained(model_name)
-        model = BertModel.from_pretrained(model_name)
-        self.embed = model.embeddings.word_embeddings
-        del model  # (we do not need the rest of the BERT model)
+
+        # Load BERT tokenizer and embeddings
+        if embed_mode == 'bert':
+            model = BertModel.from_pretrained(model_name)
+            self.embed = model.embeddings.word_embeddings
+            del model  # (we do not need the rest of the BERT model)
+        elif embed_mode == 'learned':
+            # Random embeddings initialised from N(0, 1)
+            self.embed = nn.Embedding(num_embeddings=self.tokenizer.vocab_size, embedding_dim=dim)
+        else:
+            raise NotImplementedError(f"Unknown embed_mode '{embed_mode}'.")
 
         self.transformer = nn.Transformer(
             d_model=dim,
@@ -106,33 +111,12 @@ class Model(nn.Module):
         return [toks[:ys_lengths[i]] for i, toks in enumerate(tokens)]
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def from_config(config: ModelConfig):
     return Model(
+        embed_mode=config.embed_mode,
         dim=config.dim,
         nhead=config.nhead,
         layers_encoder=config.layers_encoder,
         layers_decoder=config.layers_decoder,
         max_len=config.max_len
     )
-
