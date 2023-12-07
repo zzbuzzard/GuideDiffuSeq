@@ -5,6 +5,7 @@ from torch import nn
 from transformers import BertModel, BertTokenizer
 import math
 from diffusers.schedulers import SchedulerMixin
+from transformers import BertTokenizerFast
 from tqdm import tqdm
 
 from utils import padding_mask, clamp_to_vocab
@@ -13,7 +14,7 @@ from config import ModelConfig
 
 class Model(nn.Module):
     def __init__(self, embed_mode: str, dim: int, internal_dim: int, nhead: int, layers_encoder: int,
-                 layers_decoder: int, max_len: int, timesteps: int):
+                 layers_decoder: int, max_len: int, timesteps: int, tokenizer_mode: str):
         super().__init__()
 
         self.timesteps = timesteps
@@ -27,11 +28,18 @@ class Model(nn.Module):
             self.down_proj = nn.Linear(internal_dim, dim)
 
         bert_model_name = 'bert-base-uncased'
-        self.tokenizer = BertTokenizer.from_pretrained(bert_model_name)
+
+        if tokenizer_mode == 'bert':
+            self.tokenizer = BertTokenizer.from_pretrained(bert_model_name)
+        elif os.path.isfile(tokenizer_mode):
+            self.tokenizer = BertTokenizerFast(tokenizer_file=tokenizer_mode)
+        else:
+            raise NotImplementedError(f"Invalid tokenizer_mode '{tokenizer_mode}'. Must be a path or 'bert'.")
 
         # Load BERT tokenizer and embeddings
         if embed_mode == 'bert':
-            assert internal_dim == 768, "When using BERT embeddings, internal_dim must equal 768"
+            assert dim == 768, "When using BERT embeddings, dim must equal 768"
+            assert tokenizer_mode == 'bert', "When using BERT embeddings you must use the BERT tokenizer"
             model = BertModel.from_pretrained(bert_model_name)
             self.embed = model.embeddings.word_embeddings
             del model  # (we do not need the rest of the BERT model)

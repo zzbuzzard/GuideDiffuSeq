@@ -6,6 +6,7 @@ import json
 @dataclass
 class ModelConfig:
     embed_mode: str = "learned"  # 'bert' or 'learned'
+    tokenizer_mode: str = "bert"  # 'bert' or a path to a tokenizer
     dim: int = 768
     internal_dim: int = 768
     nhead: int = 12
