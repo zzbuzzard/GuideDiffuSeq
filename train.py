@@ -8,6 +8,7 @@ from dataclasses import asdict
 import wandb
 import argparse
 import os
+from contextlib import nullcontext
 
 from config import TrainingConfig, ModelConfig
 from model import Model, from_config
@@ -25,13 +26,14 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
         ys_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
         ys_mask = padding_mask(ys_emb, ys_l)
         loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
-        scaler.scale(loss).backward()
-        # loss.backward()
 
-        scaler.step(optimizer)
-        # optimizer.step()
-
-        scaler.update()
+        if mixed_precision:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
 
         lr_scheduler.step()
         optimizer.zero_grad()
@@ -40,13 +42,19 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
     if train_config.compile:
         train = torch.compile(train, dynamic=True)
 
+    mixed_precision = train_config.mixed_precision == "fp16"
+    print(f"Mixed precision: {mixed_precision}")
+
     noise_scheduler = DDPMScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
     eval_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
 
     start_epoch, train_data = load_state(model_dir, model, optimizer)
     lr_scheduler.last_epoch = start_epoch * len(train_dataloader)
 
-    scaler = torch.cuda.amp.GradScaler()
+    if mixed_precision:
+        scaler = torch.cuda.amp.GradScaler()
+    else:
+        scaler = None
 
     keys = ["loss", "lr"] + [i+"-val" for i in metrics]
     for i in keys:
@@ -64,7 +72,8 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
         loss_count = 0
 
         for step, (xs_tok, ys_tok, xs_l, ys_l) in enumerate(tqdm(train_dataloader)):
-            with torch.autocast(device_type="cuda", dtype=torch.float16):
+            # Only activate autocast if it is needed
+            with torch.autocast(device_type="cuda", dtype=torch.float16) if mixed_precision else nullcontext():
                 xs_emb = model.embed(xs_tok)
                 ys_emb = model.embed(ys_tok)
 
