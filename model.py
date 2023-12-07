@@ -13,17 +13,21 @@ from config import ModelConfig
 
 class Model(nn.Module):
     def __init__(self, embed_mode: str, dim: int, internal_dim: int, nhead: int, layers_encoder: int,
-                 layers_decoder: int, max_len: int):
+                 layers_decoder: int, max_len: int, timesteps: int):
         super().__init__()
 
-        bert_model_name = 'bert-base-uncased'
-        self.tokenizer = BertTokenizer.from_pretrained(bert_model_name)
+        self.timesteps = timesteps
+        self.dim = dim
+        self.internal_dim = internal_dim
 
         if dim == internal_dim:
             self.up_proj = self.down_proj = nn.Identity()
         else:
             self.up_proj = nn.Linear(dim, internal_dim)
             self.down_proj = nn.Linear(internal_dim, dim)
+
+        bert_model_name = 'bert-base-uncased'
+        self.tokenizer = BertTokenizer.from_pretrained(bert_model_name)
 
         # Load BERT tokenizer and embeddings
         if embed_mode == 'bert':
@@ -42,17 +46,15 @@ class Model(nn.Module):
             nhead=nhead,
             num_decoder_layers=layers_decoder,
             num_encoder_layers=layers_encoder,
-            dim_feedforward=dim * 4,
+            dim_feedforward=internal_dim * 4,
             batch_first=True
         )
-
-        self.dim = dim
 
         # Generate positional encoding as in Attention Is All You Need
         #  (taken from PyTorch documentation)
         position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, dim, 2) * (-math.log(10000.0) / dim))
-        pe = torch.zeros(1, max_len, dim)
+        div_term = torch.exp(torch.arange(0, internal_dim, 2) * (-math.log(10000.0) / internal_dim))
+        pe = torch.zeros(1, max_len, internal_dim)
         pe[0, :, 0::2] = torch.sin(position * div_term)
         pe[0, :, 1::2] = torch.cos(position * div_term)
         self.register_buffer('pe', pe)
@@ -64,8 +66,8 @@ class Model(nn.Module):
     def add_time_encoding(self, seq, timesteps):
         # timesteps : vector of length B
         device = seq.device
-        div_term = torch.exp(torch.arange(0, self.dim, 2, device=device) * (-math.log(10000.0) / self.dim))
-        inp = timesteps[:, None, None] * div_term  # shape B x 1 x (dim/2)
+        div_term = torch.exp(torch.arange(0, self.internal_dim, 2, device=device) * (-math.log(10000.0) / self.internal_dim))
+        inp = timesteps[:, None, None] * div_term  # shape B x 1 x (internal_dim/2)
         seq[:, :, 0::2] = seq[:, :, 0::2] + torch.sin(inp)
         seq[:, :, 1::2] = seq[:, :, 1::2] + torch.cos(inp)
         return seq
@@ -77,17 +79,20 @@ class Model(nn.Module):
         xs_pad = padding_mask(xs, xs_lengths)
         ys_pad = padding_mask(ys, ys_lengths)
 
+        xs = self.up_proj(xs)
         xs = self.add_positional_encoding(xs)
 
+        ys = self.up_proj(ys)
         ys = self.add_positional_encoding(ys)
         ys = self.add_time_encoding(ys, timesteps)
 
-        return self.transformer.forward(
+        out = self.transformer.forward(
             src=xs,
             tgt=ys,
             src_key_padding_mask=xs_pad,
             tgt_key_padding_mask=ys_pad
         )
+        return self.down_proj(out)
 
     def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, nsteps: int, clamping_trick: bool = False):
         """
@@ -98,6 +103,7 @@ class Model(nn.Module):
         torch.set_grad_enabled(False)
         # Construct ys_T from Gaussian noise
         batch_size, _, dim = xs.shape
+        assert dim == self.dim, f"Condition has dimension {dim}, expected {self.dim}."
         max_ys_len = torch.max(ys_lengths).item()
         ys_shape = (batch_size, max_ys_len, dim)
         ys = torch.randn(ys_shape, device=xs.device)
