@@ -60,8 +60,8 @@ def load_state(root_path: str, model, opt: optim.Optimizer):
     model.load(root_path)
 
     if not os.path.isfile(train_path):
-        print(f"Cannot load training data from {train_path}")
-        return 0, {}
+        print(f"{train_path} not found, not loading training data")
+        return 1, {}
 
     print(f"Loading from {root_path}")
     d = torch.load(train_path)
