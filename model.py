@@ -15,13 +15,15 @@ from config import ModelConfig
 class Model(nn.Module):
     # Constructor args correspond to the fields in config.ModelConfig
     def __init__(self, embed_mode: str, dim: int, internal_dim: int, nhead: int, layers_encoder: int,
-                 layers_decoder: int, max_len: int, timesteps: int, tokenizer_mode: str, pos_embed_mode: str):
+                 layers_decoder: int, max_len: int, timesteps: int, tokenizer_mode: str, pos_embed_mode: str,
+                 time_embed_mode: str):
         super().__init__()
 
         self.timesteps = timesteps
         self.dim = dim
         self.internal_dim = internal_dim
         self.pos_embed_mode = pos_embed_mode
+        self.time_embed_mode = time_embed_mode
 
         if dim == internal_dim:
             self.up_proj = self.down_proj = nn.Identity()
@@ -74,6 +76,17 @@ class Model(nn.Module):
         else:
             raise NotImplementedError(f"Unknown pos_embed_mode '{pos_embed_mode}'.")
 
+        if time_embed_mode == "learned":
+            self.time_map = nn.Sequential(
+                nn.Linear(internal_dim, internal_dim * 4),
+                nn.ReLU(),
+                nn.Linear(internal_dim * 4, internal_dim)
+            )
+        elif time_embed_mode == "fixed":
+            self.time_map = nn.Identity()
+        else:
+            raise NotImplementedError(f"Unknown time_embed_mode '{time_embed_mode}'.")
+
     def add_positional_encoding(self, seq):
         batch, seqlen, _ = seq.shape
         if self.pos_embed_mode == "fixed":
@@ -85,11 +98,18 @@ class Model(nn.Module):
     def add_time_encoding(self, seq, timesteps):
         # timesteps : vector of length B
         device = seq.device
+        batch_size = seq.shape[0]
+
         div_term = torch.exp(torch.arange(0, self.internal_dim, 2, device=device) * (-math.log(10000.0) / self.internal_dim))
-        inp = timesteps[:, None, None] * div_term  # shape B x 1 x (internal_dim/2)
-        seq[:, :, 0::2] = seq[:, :, 0::2] + torch.sin(inp)
-        seq[:, :, 1::2] = seq[:, :, 1::2] + torch.cos(inp)
-        return seq
+        inp = timesteps[:, None, None] * div_term  # shape (B x 1 x (internal_dim / 2))
+        te = torch.zeros((batch_size, 1, self.internal_dim), device=device)
+        te[:, :, 0::2] = torch.sin(inp)
+        te[:, :, 1::2] = torch.cos(inp)
+
+        # Apply learned (or identity) map
+        te = self.time_map(te)  # shape (B x 1 x internal_dim)
+
+        return seq + te
 
     def forward(self, xs, ys, xs_lengths, ys_lengths, timesteps):
         """
