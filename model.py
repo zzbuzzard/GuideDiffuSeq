@@ -13,13 +13,15 @@ from config import ModelConfig
 
 
 class Model(nn.Module):
+    # Constructor args correspond to the fields in config.ModelConfig
     def __init__(self, embed_mode: str, dim: int, internal_dim: int, nhead: int, layers_encoder: int,
-                 layers_decoder: int, max_len: int, timesteps: int, tokenizer_mode: str):
+                 layers_decoder: int, max_len: int, timesteps: int, tokenizer_mode: str, pos_embed_mode: str):
         super().__init__()
 
         self.timesteps = timesteps
         self.dim = dim
         self.internal_dim = internal_dim
+        self.pos_embed_mode = pos_embed_mode
 
         if dim == internal_dim:
             self.up_proj = self.down_proj = nn.Identity()
@@ -58,18 +60,27 @@ class Model(nn.Module):
             batch_first=True
         )
 
-        # Generate positional encoding as in Attention Is All You Need
-        #  (taken from PyTorch documentation)
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, internal_dim, 2) * (-math.log(10000.0) / internal_dim))
-        pe = torch.zeros(1, max_len, internal_dim)
-        pe[0, :, 0::2] = torch.sin(position * div_term)
-        pe[0, :, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
+        if pos_embed_mode == "fixed":
+            # Generate positional encoding as in Attention Is All You Need
+            #  (taken from PyTorch documentation)
+            position = torch.arange(max_len).unsqueeze(1)
+            div_term = torch.exp(torch.arange(0, internal_dim, 2) * (-math.log(10000.0) / internal_dim))
+            pe = torch.zeros(1, max_len, internal_dim)
+            pe[0, :, 0::2] = torch.sin(position * div_term)
+            pe[0, :, 1::2] = torch.cos(position * div_term)
+            self.register_buffer('pe', pe)
+        elif pos_embed_mode == "learned":
+            self.pos_embeds = nn.Embedding(max_len, embedding_dim=internal_dim)
+        else:
+            raise NotImplementedError(f"Unknown pos_embed_mode '{pos_embed_mode}'.")
 
     def add_positional_encoding(self, seq):
         batch, seqlen, _ = seq.shape
-        return seq + self.pe[:, :seqlen]
+        if self.pos_embed_mode == "fixed":
+            return seq + self.pe[:, :seqlen]
+        else:
+            inds = torch.arange(seqlen, device=seq.device)
+            return seq + self.pos_embeds(inds)[None]
 
     def add_time_encoding(self, seq, timesteps):
         # timesteps : vector of length B

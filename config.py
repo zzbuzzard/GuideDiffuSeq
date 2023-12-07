@@ -7,6 +7,8 @@ import json
 class ModelConfig:
     embed_mode: str = "learned"  # 'bert' or 'learned'
     tokenizer_mode: str = "bert"  # 'bert' or a path to a tokenizer
+    pos_embed_mode: str = "fixed"  # 'fixed' or 'learned'
+
     dim: int = 768
     internal_dim: int = 768
     nhead: int = 12
