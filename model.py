@@ -82,7 +82,7 @@ class Model(nn.Module):
             tgt_key_padding_mask=ys_pad
         )
 
-    def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, nsteps: int):
+    def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, nsteps: int, clamping_trick: bool = False):
         """
         Carries out the complete denoising inference procedure for the given token inputs `xs`.
         Note: `xs` is expected to be embedded and padded, as during training.
@@ -102,6 +102,11 @@ class Model(nn.Module):
         for t in scheduler.timesteps:
             timesteps = torch.stack([t] * batch_size).to(xs.device)
             model_output = self.forward(xs, ys, xs_lengths, ys_lengths, timesteps)
+
+            if clamping_trick:
+                model_output = clamp_to_vocab(model_output, self.embed.weight)
+                model_output = self.embed(model_output)
+
             ys = scheduler.step(model_output, t, ys).prev_sample
 
         # Clamp ys to the vocab
