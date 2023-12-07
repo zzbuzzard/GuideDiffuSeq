@@ -9,7 +9,7 @@
     "eval_epochs": 2,
     "sample_epochs": 2,
 
-    "eval_nsteps": 50,
+    "eval_nsteps": 30,
     "seed": 0,
     "mixed_precision": "fp16"
 }

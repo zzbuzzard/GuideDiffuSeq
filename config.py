@@ -5,8 +5,9 @@ import json
 
 @dataclass
 class ModelConfig:
-    embed_mode: str = "bert"  # 'bert' or 'learned'
+    embed_mode: str = "learned"  # 'bert' or 'learned'
     dim: int = 768
+    internal_dim: int = 768
     nhead: int = 12
     layers_encoder: int = 12
     layers_decoder: int = 12

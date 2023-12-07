@@ -12,16 +12,23 @@ from config import ModelConfig
 
 
 class Model(nn.Module):
-    def __init__(self, embed_mode: str, dim: int, nhead: int, layers_encoder: int, layers_decoder: int, max_len: int):
+    def __init__(self, embed_mode: str, dim: int, internal_dim: int, nhead: int, layers_encoder: int,
+                 layers_decoder: int, max_len: int):
         super().__init__()
 
-        model_name = 'bert-base-uncased'
-        self.tokenizer = BertTokenizer.from_pretrained(model_name)
+        bert_model_name = 'bert-base-uncased'
+        self.tokenizer = BertTokenizer.from_pretrained(bert_model_name)
+
+        if dim == internal_dim:
+            self.up_proj = self.down_proj = nn.Identity()
+        else:
+            self.up_proj = nn.Linear(dim, internal_dim)
+            self.down_proj = nn.Linear(internal_dim, dim)
 
         # Load BERT tokenizer and embeddings
         if embed_mode == 'bert':
-            assert dim == 768, "When using BERT embeddings, dim must equal 768"
-            model = BertModel.from_pretrained(model_name)
+            assert internal_dim == 768, "When using BERT embeddings, internal_dim must equal 768"
+            model = BertModel.from_pretrained(bert_model_name)
             self.embed = model.embeddings.word_embeddings
             del model  # (we do not need the rest of the BERT model)
         elif embed_mode == 'learned':
@@ -31,7 +38,7 @@ class Model(nn.Module):
             raise NotImplementedError(f"Unknown embed_mode '{embed_mode}'.")
 
         self.transformer = nn.Transformer(
-            d_model=dim,
+            d_model=internal_dim,
             nhead=nhead,
             num_decoder_layers=layers_decoder,
             num_encoder_layers=layers_encoder,
@@ -132,11 +139,4 @@ class Model(nn.Module):
 
 
 def from_config(config: ModelConfig):
-    return Model(
-        embed_mode=config.embed_mode,
-        dim=config.dim,
-        nhead=config.nhead,
-        layers_encoder=config.layers_encoder,
-        layers_decoder=config.layers_decoder,
-        max_len=config.max_len
-    )
+    return Model(**vars(config))
