@@ -21,11 +21,32 @@ metrics = ["BLEU", "ROUGE", "sentence-BLEU"]
 
 def train_loop(model_dir: str, train_config: TrainingConfig, model_config: ModelConfig, model: Model, optimizer,
                train_dataloader, lr_scheduler, val_dataset):
+    def train(model, scaler, ys_noised, timesteps, xs_emb, ys_emb, xs_l, ys_l):
+        ys_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
+        ys_mask = padding_mask(ys_emb, ys_l)
+        loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
+        scaler.scale(loss).backward()
+        # loss.backward()
+
+        scaler.step(optimizer)
+        # optimizer.step()
+
+        scaler.update()
+
+        lr_scheduler.step()
+        optimizer.zero_grad()
+        return loss.item()
+
+    if train_config.compile:
+        train = torch.compile(train, dynamic=True)
+
     noise_scheduler = DDPMScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
     eval_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
 
     start_epoch, train_data = load_state(model_dir, model, optimizer)
     lr_scheduler.last_epoch = start_epoch * len(train_dataloader)
+
+    scaler = torch.cuda.amp.GradScaler()
 
     keys = ["loss", "lr"] + [i+"-val" for i in metrics]
     for i in keys:
@@ -43,36 +64,26 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
         loss_count = 0
 
         for step, (xs_tok, ys_tok, xs_l, ys_l) in enumerate(tqdm(train_dataloader)):
-            xs_emb = model.embed(xs_tok)
-            ys_emb = model.embed(ys_tok)
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                xs_emb = model.embed(xs_tok)
+                ys_emb = model.embed(ys_tok)
 
-            noise = torch.randn(ys_emb.shape, device=ys_emb.device)
-            bs = xs_emb.shape[0]
+                noise = torch.randn(ys_emb.shape, device=ys_emb.device)
+                bs = xs_emb.shape[0]
 
-            # Sample a random timestep for each image
-            timesteps = torch.randint(
-                0, model_config.timesteps, (bs,), device=ys_emb.device,
-                dtype=torch.int64
-            )
+                # Sample a random timestep for each image
+                timesteps = torch.randint(
+                    0, model_config.timesteps, (bs,), device=ys_emb.device,
+                    dtype=torch.int64
+                )
 
-            # Add noise
-            ys_noised = noise_scheduler.add_noise(ys_emb, noise, timesteps)
+                # Add noise
+                ys_noised = noise_scheduler.add_noise(ys_emb, noise, timesteps)
 
-            ys_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
-            ys_mask = padding_mask(ys_emb, ys_l)
-            loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
-            loss.backward()
+                loss = train(model, scaler, ys_noised, timesteps, xs_emb, ys_emb, xs_l, ys_l)
 
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-
-            # logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
-            # progress_bar.update(1)
-            # progress_bar.set_postfix(**logs)
+            tot_loss += loss
             global_step += 1
-
-            tot_loss += loss.detach().item()
             loss_count += 1
 
         wandb.log({"loss": tot_loss / loss_count, "lr": lr_scheduler.get_last_lr()[0], "epoch": epoch})
@@ -86,8 +97,11 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
         # Show example output on final batch of this epoch
         if epoch % train_config.sample_epochs == 0:
             mx_num = 8
+
+            model.eval()
             toks = model.inference(xs_emb[:mx_num], xs_l[:mx_num], ys_l[:mx_num], eval_scheduler,
                                    train_config.eval_nsteps)
+            model.train()
 
             log_tbl = wandb.Table(columns=["Steps", "Input", "Ground Truth", "Output"])
 
@@ -111,8 +125,10 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
 
         if epoch % train_config.eval_epochs == 0:
             print("Evaluating...")
+            model.eval()
             out = eval_metric(model, val_dataset, metrics, eval_scheduler,
                               nsteps=train_config.eval_nsteps, batch_size=train_config.batch_size)
+            model.train()
             out = {i+"-val": out[i] for i in out}
             print("Metrics:", out)
             for i in out:

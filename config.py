@@ -40,9 +40,10 @@ class TrainingConfig:
     sample_epochs: int
 
     learning_rate: float = 1e-4
-    eval_nsteps: int = 50
+    eval_nsteps: int = 30
     seed: int = 0
     mixed_precision: str = "fp16"
+    compile: bool = False
 
     @staticmethod
     def load(root_path: str):
