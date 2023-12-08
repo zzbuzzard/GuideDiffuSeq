@@ -157,6 +157,8 @@ if __name__ == "__main__":
     model_config = ModelConfig.load(args.model_dir)
     train_config = TrainingConfig.load(args.model_dir)
 
+    torch.manual_seed(train_config.seed)
+
     name = os.path.split(args.model_dir)[-1]
     wandb.init(
         project="var-len-diffu-seq-2",
