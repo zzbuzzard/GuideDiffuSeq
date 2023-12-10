@@ -44,6 +44,7 @@ class TrainingConfig:
     sample_epochs: int
 
     learning_rate: float = 1e-4
+    learning_rate_final_mul: float = 0.1
     eval_nsteps: int = 30
     seed: int = 0
     mixed_precision: str = "fp16"

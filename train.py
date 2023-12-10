@@ -185,7 +185,7 @@ if __name__ == "__main__":
 
     scheduler = lr_scheduler.LinearLR(optimizer=optimizer,
                                       start_factor=1,
-                                      end_factor=0.1,
+                                      end_factor=train_config.learning_rate_final_mul,
                                       total_iters=len(train_dataloader) * train_config.num_epochs)
 
     # scheduler = get_cosine_schedule_with_warmup(
