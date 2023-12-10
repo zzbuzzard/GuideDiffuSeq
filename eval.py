@@ -4,9 +4,9 @@ from os.path import join
 from diffusers import DPMSolverMultistepScheduler
 import argparse
 from torchmetrics.functional.text import bleu_score, rouge_score
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from typing import List
 from tqdm import tqdm
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
 from config import ModelConfig
 from model import Model, from_config
@@ -20,8 +20,12 @@ def get_sentence_bleu(pred, gt):
     return sentence_bleu([gt.split()], pred.split(), smoothing_function=SmoothingFunction().method4)
 
 
-def compute_metric(name: str, preds: List[str], gts: List[str]):
+def compute_metric(name: str, preds: List[str], gts: List[str], add_special_tokens=False):
     """Computes a given metric on a list of preds and gts."""
+    if add_special_tokens:
+        preds = [f"[CLS] {i} [SEP]" for i in preds]
+        gts = [f"[CLS] {i} [SEP]" for i in gts]
+
     name = name.upper()
     if name == "BLEU":
         return bleu_score(preds, gts).item()
@@ -49,9 +53,8 @@ def eval_metric(model: Model, dataset: TextDataset, metric_names: List[str], eva
             xs_emb = model.embed(xs_tok)
             toks = model.inference(xs_emb, xs_l, ys_l, eval_scheduler, nsteps, clamping_trick=clamping_trick)
 
-            for ind, t in enumerate(toks):
+            for ind, pred in enumerate(toks):
                 gt = ys_tok[ind][:ys_l[ind]]
-                pred = toks[ind]
 
                 gts.append(model.tokenizer.decode(gt))
                 preds.append(model.tokenizer.decode(pred))
@@ -59,6 +62,9 @@ def eval_metric(model: Model, dataset: TextDataset, metric_names: List[str], eva
     out = {}
     for name in metric_names:
         out[name] = compute_metric(name, preds, gts)
+
+    for name in metric_names:
+        out[name + "-padded"] = compute_metric(name, preds, gts, add_special_tokens=True)
 
     return out
 
@@ -69,13 +75,14 @@ if __name__ == "__main__":
                                                                  "config.json and train_config.json files.")
     parser.add_argument("-d", "--data-dir", required=True, help="Path to data directory.")
     parser.add_argument("-n", "--nsteps", type=int, default=50, help="Number of steps to use for sampling")
-    parser.add_argument("-b", "--batch", type=int, default=64, help="Batch size")
+    parser.add_argument("-b", "--batch", type=int, default=256, help="Batch size")
     parser.add_argument("-c", "--clamping-trick", action="store_true")
     args = parser.parse_args()
 
     model_config = ModelConfig.load(args.model_dir)
     model = from_config(model_config).to(device)
     model.load(args.model_dir)
+    model.eval()
 
     eval_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
     dataset = TextDataset(args.data_dir, split="test", tokenizer=model.tokenizer, device=device)

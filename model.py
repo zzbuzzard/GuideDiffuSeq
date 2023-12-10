@@ -129,7 +129,8 @@ class Model(nn.Module):
             src=xs,
             tgt=ys,
             src_key_padding_mask=xs_pad,
-            tgt_key_padding_mask=ys_pad
+            tgt_key_padding_mask=ys_pad,
+            memory_key_padding_mask=xs_pad
         )
         return self.down_proj(out)
 
@@ -140,11 +141,11 @@ class Model(nn.Module):
         Requires the lengths `ys_lengths` of the outputs to be specified, then generates `ys`.
         """
         torch.set_grad_enabled(False)
-        # Construct ys_T from Gaussian noise
         batch_size, _, dim = xs.shape
         assert dim == self.dim, f"Condition has dimension {dim}, expected {self.dim}."
         max_ys_len = torch.max(ys_lengths).item()
         ys_shape = (batch_size, max_ys_len, dim)
+        # Construct ys_T from Gaussian noise
         ys = torch.randn(ys_shape, device=xs.device)
 
         # Set step values
