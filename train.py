@@ -57,7 +57,7 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
     else:
         scaler = None
 
-    keys = ["loss", "lr"] + [i+"-val" for i in metrics] + [i+"-padded-val" for i in metrics]
+    keys = ["loss", "lr"] + [i+"-val" for i in metrics]
     for i in keys:
         if i not in train_data:
             train_data[i] = {}
@@ -172,7 +172,6 @@ if __name__ == "__main__":
     wandb.define_metric("lr", step_metric="epoch")
     for i in metrics:
         wandb.define_metric(i + "-val", step_metric="epoch")
-        wandb.define_metric(i + "-padded-val", step_metric="epoch")
 
     model = from_config(model_config).to(device)
 

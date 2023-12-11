@@ -21,14 +21,8 @@ def get_sentence_bleu(pred: str, gt: str):
     return sentence_bleu([gt.split()], pred.split(), smoothing_function=SmoothingFunction().method4)
 
 
-def compute_metric(name: str, preds: List[str], gts: List[str], add_special_tokens=False):
+def compute_metric(name: str, preds: List[str], gts: List[str]):
     """Computes a given metric on a list of preds and gts."""
-    # If add_special_tokens is enabled, start and end 'tokens' are added to all strings.
-    # This is **bad practice**, but it is done in DiffuSeq, so I optionally replicate it here for fair comparison.
-    if add_special_tokens:
-        preds = [f"[CLS] {i} [SEP]" for i in preds]
-        gts = [f"[CLS] {i} [SEP]" for i in gts]
-
     name = name.upper()
     if name == "BLEU":
         return bleu_score(preds, gts).item()
@@ -75,9 +69,6 @@ def eval_model(model: Model, dataset: TextDataset, metric_names: List[str], conf
     for name in metric_names:
         out[name] = compute_metric(name, preds, gts)
 
-    for name in metric_names:
-        out[name + "-padded"] = compute_metric(name, preds, gts, add_special_tokens=True)
-
     return out
 
 
@@ -88,11 +79,20 @@ def mbr_select(predss: List[List[str]]) -> List[str]:
     if s == 1:
         return predss[0]
     for preds in zip(*predss):
+        # v1
         scores = np.zeros((s, s))
         for i in range(s):
             for j in range(s):
                 scores[i, j] = get_sentence_bleu(preds[i], preds[j])
         chosen_ind = np.argmax(np.sum(scores, axis=1)).item()
+
+        # v2
+        # scores = np.zeros((s,))
+        # for i in range(s):
+        #     others = preds[:i] + preds[i+1:]
+        #     scores[i] = sentence_bleu([i.split() for i in others], preds[i].split(), smoothing_function=SmoothingFunction().method4)
+        # chosen_ind = np.argmax(scores).item()
+
         out.append(preds[chosen_ind])
     return out
 
@@ -135,6 +135,7 @@ if __name__ == "__main__":
                 preds = [i.strip() for i in file.readlines()]
         else:
             print(f"Evaluating {i+1} / {args.mbr_set_size}...")
+            torch.manual_seed(i)
             preds, gts_ = _eval_model_on_dataset(model, dataset, config, batch_size=args.batch_size)
             with open(path, "w") as file:
                 file.write('\n'.join(preds) + '\n')
@@ -152,8 +153,6 @@ if __name__ == "__main__":
     out = {}
     for name in metric_names:
         out[name] = compute_metric(name, preds, gts)
-    for name in metric_names:
-        out[name + "-padded"] = compute_metric(name, preds, gts, add_special_tokens=True)
 
     print("Model path:", args.model_dir)
     print("Evaluation config:", config.get_path())
