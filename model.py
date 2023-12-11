@@ -134,7 +134,8 @@ class Model(nn.Module):
         )
         return self.down_proj(out)
 
-    def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, nsteps: int, clamping_trick: bool = False):
+    def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, nsteps: int, clamping_trick: bool = False,
+                  cfg: float = 1):
         """
         Carries out the complete denoising inference procedure for the given token inputs `xs`.
         Note: `xs` is expected to be embedded and padded, as during training.
@@ -148,6 +149,11 @@ class Model(nn.Module):
         # Construct ys_T from Gaussian noise
         ys = torch.randn(ys_shape, device=xs.device)
 
+        # For CFG
+        uncond_xs = torch.tensor([self.tokenizer.mask_token_id] * batch_size, device=xs.device, dtype=torch.long)[:, None]
+        uncond_xs = self.embed(uncond_xs)
+        uncond_xs_lengths = torch.tensor([1] * batch_size, device=xs.device, dtype=torch.long)
+
         # Set step values
         scheduler.set_timesteps(nsteps)
 
@@ -155,6 +161,10 @@ class Model(nn.Module):
         for t in scheduler.timesteps:
             timesteps = torch.stack([t] * batch_size).to(xs.device)
             model_output = self.forward(xs, ys, xs_lengths, ys_lengths, timesteps)
+
+            if cfg != 1:
+                model_output_uncond = self.forward(uncond_xs, ys, uncond_xs_lengths, ys_lengths, timesteps)
+                model_output = model_output_uncond + cfg * (model_output - model_output_uncond)
 
             if clamping_trick:
                 model_output = clamp_to_vocab(model_output, self.embed.weight)

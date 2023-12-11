@@ -42,6 +42,8 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
     if train_config.compile:
         train = torch.compile(train, dynamic=True)
 
+    mask_token_id = model.tokenizer.mask_token_id
+
     mixed_precision = train_config.mixed_precision == "fp16"
     print(f"Mixed precision: {mixed_precision}")
 
@@ -75,6 +77,18 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
         for step, (xs_tok, ys_tok, xs_l, ys_l) in enumerate(tqdm(train_dataloader)):
             # Only activate autocast if it is needed
             with torch.autocast(device_type="cuda", dtype=torch.float16) if mixed_precision else nullcontext():
+                batch_size = xs_tok.shape[0]
+
+                # Change some conditions to a single [MASK] token to enable CFG
+                with torch.no_grad():
+                    uncond_xs = torch.zeros_like(xs_tok)
+                    uncond_xs[:, 0] = mask_token_id
+                    uncond_xs_l = torch.tensor([1] * batch_size, device=device, dtype=torch.long)
+                    unconds = torch.rand((batch_size,), device=device) < train_config.uncond_prob
+
+                    xs_tok = torch.where(unconds.unsqueeze(1), uncond_xs, xs_tok)
+                    xs_l = torch.where(unconds, uncond_xs_l, xs_l)
+
                 xs_emb = model.embed(xs_tok)
                 ys_emb = model.embed(ys_tok)
 
@@ -164,7 +178,7 @@ if __name__ == "__main__":
         project="var-len-diffu-seq-3",
         name=f"{name}",
         config=asdict(train_config),
-        tags=[]
+        tags=["small"]
     )
 
     wandb.define_metric("epoch")
