@@ -73,13 +73,15 @@ class EvalConfig:
     scheduler: str = "DPM++"  # DPM++ or DDIM
     nsteps: int = 30
     cfg: float = 1  # CFG=1 is equivalent to not using CFG
+    cfg_lerp: bool = False
     clamp: bool = False
 
     def get_path(self):
         # e.g. 'cfg=3.5_steps=10_clamp_DDIM'
         s = []
         if self.cfg != 1:
-            s.append(f"cfg={self.cfg:.2f}")
+            extra = "_lerp" if self.cfg_lerp else ""
+            s.append(f"cfg{extra}={self.cfg:.2f}")
         s.append(f"steps={self.nsteps}")
         if self.clamp:
             s.append("clamp")

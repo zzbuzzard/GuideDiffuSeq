@@ -50,7 +50,7 @@ def _eval_model_on_dataset(model: Model, dataset: TextDataset, config: EvalConfi
         for step, (xs_tok, ys_tok, xs_l, ys_l) in enumerate(it):
             xs_emb = model.embed(xs_tok)
             toks = model.inference(xs_emb, xs_l, ys_l, eval_scheduler, config.nsteps, clamping_trick=config.clamp,
-                                   cfg=config.cfg)
+                                   cfg=config.cfg, cfg_lerp=config.cfg_lerp)
 
             for ind, pred in enumerate(toks):
                 gt = ys_tok[ind][:ys_l[ind]]
@@ -108,9 +108,10 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--scheduler", type=str, default="DPM++", help="Scheduler (DPM++ or DDIM).")
     parser.add_argument("-S", "--mbr-set-size", type=int, default=1)
     parser.add_argument("-cfg", "--cfg", type=float, default=1.0, help="Classifier-free guidance scale.")
+    parser.add_argument("-cfgl", "--cfg-lerp", action="store_true", help="Lerp CFG scale from CFG to 0")
     args = parser.parse_args()
 
-    config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, clamp=args.clamping_trick, cfg=args.cfg)
+    config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, clamp=args.clamping_trick, cfg=args.cfg, cfg_lerp=args.cfg_lerp)
 
     # Load model
     model_config = ModelConfig.load(args.model_dir)

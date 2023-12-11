@@ -111,19 +111,46 @@ class Model(nn.Module):
 
         return seq + te
 
-    def forward(self, xs, ys, xs_lengths, ys_lengths, timesteps):
-        """
-        Applies model to a batch of inputs at given timesteps. Used during training.
-        """
+    def _preprocess_cond(self, xs, xs_lengths):
+        """Generates padding mask, applies up_proj and adds positional encoding."""
         xs_pad = padding_mask(xs, xs_lengths)
-        ys_pad = padding_mask(ys, ys_lengths)
-
         xs = self.up_proj(xs)
         xs = self.add_positional_encoding(xs)
+        return xs, xs_pad
+
+    def _preprocess_tgt(self, ys, ys_lengths, timesteps):
+        """Generates padding mask, applies up_proj and adds positional + time encodings."""
+        ys_pad = padding_mask(ys, ys_lengths)
 
         ys = self.up_proj(ys)
         ys = self.add_positional_encoding(ys)
         ys = self.add_time_encoding(ys, timesteps)
+
+        return ys, ys_pad
+
+    def forward_with_encoder_output(self, encoder_output, xs_pad, ys, ys_pad, timesteps):
+        """
+        Computes `forward` when the encoder output has been pre-computed. Used for improving CFG efficiency.
+        Additionally, takes ys_pad as an output to prevent recomputation at each step of inference.
+        """
+        ys = self.up_proj(ys)
+        ys = self.add_positional_encoding(ys)
+        ys = self.add_time_encoding(ys, timesteps)
+
+        out = self.transformer.decoder.forward(
+            tgt=ys,
+            memory=encoder_output,
+            tgt_key_padding_mask=ys_pad,
+            memory_key_padding_mask=xs_pad
+        )
+        return self.down_proj(out)
+
+    def forward(self, xs, ys, xs_lengths, ys_lengths, timesteps):
+        """
+        Applies model to a batch of inputs at given timesteps. Used during training.
+        """
+        xs, xs_pad = self._preprocess_cond(xs, xs_lengths)
+        ys, ys_pad = self._preprocess_tgt(ys, ys_lengths, timesteps)
 
         out = self.transformer.forward(
             src=xs,
@@ -135,51 +162,70 @@ class Model(nn.Module):
         return self.down_proj(out)
 
     def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, nsteps: int, clamping_trick: bool = False,
-                  cfg: float = 1):
+                  cfg: float = 1, cfg_lerp: bool = False):
         """
         Carries out the complete denoising inference procedure for the given token inputs `xs`.
         Note: `xs` is expected to be embedded and padded, as during training.
         Requires the lengths `ys_lengths` of the outputs to be specified, then generates `ys`.
         """
-        torch.set_grad_enabled(False)
-        batch_size, _, dim = xs.shape
-        assert dim == self.dim, f"Condition has dimension {dim}, expected {self.dim}."
-        max_ys_len = torch.max(ys_lengths).item()
-        ys_shape = (batch_size, max_ys_len, dim)
-        # Construct ys_T from Gaussian noise
-        ys = torch.randn(ys_shape, device=xs.device)
+        with torch.no_grad():
+            batch_size, _, dim = xs.shape
+            assert dim == self.dim, f"Condition has dimension {dim}, expected {self.dim}."
+            max_ys_len = torch.max(ys_lengths).item()
+            ys_shape = (batch_size, max_ys_len, dim)
+            # Construct ys_T from Gaussian noise
+            ys = torch.randn(ys_shape, device=xs.device)
 
-        # For CFG
-        uncond_xs = torch.tensor([self.tokenizer.mask_token_id] * batch_size, device=xs.device, dtype=torch.long)[:, None]
-        uncond_xs = self.embed(uncond_xs)
-        uncond_xs_lengths = torch.tensor([1] * batch_size, device=xs.device, dtype=torch.long)
-
-        # Set step values
-        scheduler.set_timesteps(nsteps)
-
-        # Run denoising process
-        for t in scheduler.timesteps:
-            timesteps = torch.stack([t] * batch_size).to(xs.device)
-            model_output = self.forward(xs, ys, xs_lengths, ys_lengths, timesteps)
+            # The encoder output does not change during inference, so may be precomputed here
+            xs, xs_pad = self._preprocess_cond(xs, xs_lengths)
+            encoder_out = self.transformer.encoder.forward(
+                src=xs,
+                src_key_padding_mask=xs_pad
+            )
 
             if cfg != 1:
-                model_output_uncond = self.forward(uncond_xs, ys, uncond_xs_lengths, ys_lengths, timesteps)
-                model_output = model_output_uncond + cfg * (model_output - model_output_uncond)
+                # Precompute the encoder output in the masked case too
+                uncond_xs = torch.tensor([self.tokenizer.mask_token_id] * batch_size, device=xs.device, dtype=torch.long)[:, None]
+                uncond_xs = self.embed(uncond_xs)
+                uncond_xs_lengths = torch.tensor([1] * batch_size, device=xs.device, dtype=torch.long)
+                uncond_xs, uncond_xs_pad = self._preprocess_cond(uncond_xs, uncond_xs_lengths)
+                uncond_encoder_out = self.transformer.encoder.forward(
+                    src=uncond_xs,
+                    src_key_padding_mask=uncond_xs_pad
+                )
 
-            if clamping_trick:
-                model_output = clamp_to_vocab(model_output, self.embed.weight)
-                model_output = self.embed(model_output)
+            # Finally, precompute ys_pad as this does not change during inference
+            ys_pad = padding_mask(ys, ys_lengths)
 
-            ys = scheduler.step(model_output, t, ys).prev_sample
+            # Set step values
+            scheduler.set_timesteps(nsteps)
 
-        # Clamp ys to the vocab
-        tokens = clamp_to_vocab(ys, self.embed.weight)
+            # Run denoising process
+            for t in scheduler.timesteps:
+                timesteps = torch.stack([t] * batch_size).to(xs.device)
+                # model_output = self.forward(xs, ys, xs_lengths, ys_lengths, timesteps)
+                model_output = self.forward_with_encoder_output(encoder_out, xs_pad, ys, ys_pad, timesteps)
 
-        torch.set_grad_enabled(True)
+                if cfg != 1:
+                    # model_output_uncond = self.forward(uncond_xs, ys, uncond_xs_lengths, ys_lengths, timesteps)
+                    # Compute unconditional prediction
+                    model_output_uncond = self.forward_with_encoder_output(uncond_encoder_out, uncond_xs_pad, ys, ys_pad, timesteps)
+                    # Apply CFG
+                    scale = cfg if not cfg_lerp else cfg * t / self.timesteps
+                    model_output = model_output_uncond + scale * (model_output - model_output_uncond)
 
-        # Trim parts not in the input
-        # Note: it is inefficient to compute KNN for the padding, this could be improved
-        return [toks[:ys_lengths[i]] for i, toks in enumerate(tokens)]
+                if clamping_trick:
+                    model_output = clamp_to_vocab(model_output, self.embed.weight)
+                    model_output = self.embed(model_output)
+
+                ys = scheduler.step(model_output, t, ys).prev_sample
+
+            # Clamp ys to the vocab
+            tokens = clamp_to_vocab(ys, self.embed.weight)
+
+            # Trim parts not in the input
+            # Note: it is inefficient to compute KNN for the padding, this could be improved
+            return [toks[:ys_lengths[i]] for i, toks in enumerate(tokens)]
 
     def load(self, root_path: str):
         path = join(root_path, "model.pt")
