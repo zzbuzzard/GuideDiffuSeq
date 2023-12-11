@@ -10,11 +10,11 @@ import argparse
 import os
 from contextlib import nullcontext
 
-from config import TrainingConfig, ModelConfig
+from config import TrainingConfig, ModelConfig, EvalConfig
 from model import Model, from_config
 from dataset import TextDataset, collate
 from utils import masked_loss, padding_mask, load_state, save_state
-from eval import eval_metric
+from eval import eval_model
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 metrics = ["BLEU", "ROUGE", "sentence-BLEU"]
@@ -46,7 +46,8 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
     print(f"Mixed precision: {mixed_precision}")
 
     noise_scheduler = DDPMScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
-    eval_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
+    eval_config = EvalConfig(nsteps=train_config.eval_nsteps)
+    eval_scheduler = eval_config.get_scheduler(model_config.timesteps)
 
     start_epoch, train_data = load_state(model_dir, model, optimizer)
     lr_scheduler.last_epoch = start_epoch * len(train_dataloader)
@@ -135,8 +136,7 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
         if epoch % train_config.eval_epochs == 0:
             print("Evaluating...")
             model.eval()
-            out = eval_metric(model, val_dataset, metrics, eval_scheduler,
-                              nsteps=train_config.eval_nsteps, batch_size=train_config.batch_size)
+            out = eval_model(model, val_dataset, metrics, config=eval_config, batch_size=train_config.batch_size)
             model.train()
             out = {i+"-val": out[i] for i in out}
             print("Metrics:", out)

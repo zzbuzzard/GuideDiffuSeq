@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from os import path
 import json
+from diffusers.schedulers import DDIMScheduler, DPMSolverMultistepScheduler
 
 
 @dataclass
@@ -63,4 +64,34 @@ class TrainingConfig:
             data = json.loads(file.read())
 
         return TrainingConfig(**data)
+
+
+@dataclass
+class EvalConfig:
+    scheduler: str = "DPM++"  # DPM++ or DDIM
+    nsteps: int = 30
+    cfg: float = 1  # CFG=1 is equivalent to not using CFG
+    clamp: bool = False
+
+    def get_path(self):
+        # e.g. 'cfg=3.5_steps=10_clamp_DDIM'
+        s = []
+        if self.cfg != 1:
+            s.append(f"cfg={self.cfg:.2f}")
+        s.append(f"steps={self.nsteps}")
+        if self.clamp:
+            s.append("clamp")
+        if self.scheduler != "DPM++":
+            s.append(self.scheduler)
+        return "_".join(s)
+
+    def get_scheduler(self, train_timesteps: int):
+        if self.scheduler == "DPM++":
+            return DPMSolverMultistepScheduler(train_timesteps, prediction_type="sample")
+        elif self.scheduler == "DDIM":
+            return DDIMScheduler(train_timesteps, prediction_type="sample")
+        else:
+            raise NotImplementedError(f"Unknown scheduler '{self.scheduler}'. Note: it should be easy to add support"
+                                      f"for a new diffusers scheduler by adding it to EvalConfig, so long as that"
+                                      f"scheduler has support for sample prediction_type mode.")
 
