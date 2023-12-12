@@ -4,8 +4,7 @@ import torch
 from torch_cluster import knn
 import torch.nn.functional as F
 from torch import optim
-import json
-from config import ModelConfig
+import math
 
 
 def padding_mask(xs: torch.Tensor, lengths: torch.LongTensor):
@@ -80,3 +79,31 @@ def load_state(root_path: str, model, opt: optim.Optimizer):
     d = torch.load(train_path)
     opt.load_state_dict(d["opt"])
     return d["epoch"], d["data"]
+
+
+# Taken from OpenAI/guided-diffusion
+def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
+    """
+    Create a beta schedule that discretizes the given alpha_t_bar function,
+    which defines the cumulative product of (1-beta) over time from t = [0,1].
+
+    :param num_diffusion_timesteps: the number of betas to produce.
+    :param alpha_bar: a lambda that takes an argument t from 0 to 1 and
+                      produces the cumulative product of (1-beta) up to that
+                      part of the diffusion process.
+    :param max_beta: the maximum beta to use; use values lower than 1 to
+                     prevent singularities.
+    """
+    betas = []
+    for i in range(num_diffusion_timesteps):
+        t1 = i / num_diffusion_timesteps
+        t2 = (i + 1) / num_diffusion_timesteps
+        betas.append(min(1 - alpha_bar(t2) / alpha_bar(t1), max_beta))
+    return torch.Tensor(betas)
+
+
+def sqrt_noise_schedule(num_diffusion_timesteps: int):
+    return betas_for_alpha_bar(
+        num_diffusion_timesteps,
+        lambda t: 1 - math.sqrt(t + 0.0001),
+    )

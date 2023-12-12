@@ -4,6 +4,7 @@ import json
 from diffusers.schedulers import DDIMScheduler, DPMSolverMultistepScheduler
 
 from length_model import LengthModel, Oracle, NormalDist, UniformDiff, Fixed
+from utils import sqrt_noise_schedule
 
 @dataclass
 class ModelConfig:
@@ -98,10 +99,11 @@ class EvalConfig:
         return "_".join(s)
 
     def get_scheduler(self, train_timesteps: int):
+        betas = sqrt_noise_schedule(train_timesteps)
         if self.scheduler == "DPM++":
-            return DPMSolverMultistepScheduler(train_timesteps, prediction_type="sample")
+            return DPMSolverMultistepScheduler(train_timesteps, prediction_type="sample", trained_betas=betas)
         elif self.scheduler == "DDIM":
-            return DDIMScheduler(train_timesteps, prediction_type="sample")
+            return DDIMScheduler(train_timesteps, prediction_type="sample", trained_betas=betas)
         else:
             raise NotImplementedError(f"Unknown scheduler '{self.scheduler}'. Note: it should be easy to add support"
                                       f"for a new diffusers scheduler by adding it to EvalConfig, so long as that"

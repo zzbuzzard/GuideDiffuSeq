@@ -3,7 +3,7 @@ import torch.utils.data as dutils
 from torch import optim
 from torch.optim import lr_scheduler
 from tqdm.auto import tqdm
-from diffusers import DDPMScheduler, DPMSolverMultistepScheduler, get_cosine_schedule_with_warmup
+from diffusers import DDPMScheduler
 from dataclasses import asdict
 import wandb
 import argparse
@@ -13,7 +13,7 @@ from contextlib import nullcontext
 from config import TrainingConfig, ModelConfig, EvalConfig
 from model import Model, from_config
 from dataset import TextDataset, collate
-from utils import masked_loss, masked_loss_batched, padding_mask, load_state, save_state
+from utils import masked_loss, masked_loss_batched, padding_mask, load_state, save_state, sqrt_noise_schedule
 from eval import eval_model
 from importance_sampler import ImportanceSampler
 
@@ -57,7 +57,9 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
     mixed_precision = train_config.mixed_precision == "fp16"
     print(f"Mixed precision: {mixed_precision}")
 
-    noise_scheduler = DDPMScheduler(num_train_timesteps=model_config.timesteps, prediction_type="sample")
+    noise_scheduler = DDPMScheduler(num_train_timesteps=model_config.timesteps,
+                                    prediction_type="sample",
+                                    trained_betas=sqrt_noise_schedule(model_config.timesteps))  # custom sqrt schedule
     eval_config = EvalConfig(nsteps=train_config.eval_nsteps)
     eval_scheduler = eval_config.get_scheduler(model_config.timesteps)
 
