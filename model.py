@@ -162,7 +162,7 @@ class Model(nn.Module):
         return self.down_proj(out)
 
     def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, nsteps: int, clamping_trick: bool = False,
-                  cfg: float = 1, cfg_lerp: bool = False):
+                  clamp_lerp: bool = False, cfg: float = 1, cfg_lerp: bool = False):
         """
         Carries out the complete denoising inference procedure for the given token inputs `xs`.
         Note: `xs` is expected to be embedded and padded, as during training.
@@ -215,8 +215,12 @@ class Model(nn.Module):
                     model_output = model_output_uncond + scale * (model_output - model_output_uncond)
 
                 if clamping_trick:
-                    model_output = clamp_to_vocab(model_output, self.embed.weight)
-                    model_output = self.embed(model_output)
+                    closest_tokens = clamp_to_vocab(model_output, self.embed.weight)
+                    emb = self.embed(closest_tokens)
+
+                    # Complete transition when t=0, no transition when t=T
+                    amount = 1 - t / self.timesteps if clamp_lerp else 1
+                    model_output = model_output + amount * (emb - model_output)
 
                 ys = scheduler.step(model_output, t, ys).prev_sample
 

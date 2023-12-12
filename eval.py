@@ -54,7 +54,7 @@ def _eval_model_on_dataset(model: Model, dataset: TextDataset, config: EvalConfi
             ys_l_pred = len_model.predict(xs_l, ys_l)
             xs_emb = model.embed(xs_tok)
             toks = model.inference(xs_emb, xs_l, ys_l_pred, eval_scheduler, config.nsteps, clamping_trick=config.clamp,
-                                   cfg=config.cfg, cfg_lerp=config.cfg_lerp)
+                                   clamp_lerp=config.clamp_lerp, cfg=config.cfg, cfg_lerp=config.cfg_lerp)
 
             for ind, pred in enumerate(toks):
                 gt = ys_tok[ind][:ys_l[ind]]
@@ -109,6 +109,7 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--nsteps", type=int, default=30, help="Number of steps to use for sampling.")
     parser.add_argument("-b", "--batch_size", type=int, default=256, help="Batch size.")
     parser.add_argument("-c", "--clamping-trick", action="store_true", help="See Diffusion-LM paper for details.")
+    parser.add_argument("-cl", "--clamp-lerp", action="store_true", help="Lerp clamp strength over time")
     parser.add_argument("-s", "--scheduler", type=str, default="DPM++", help="Scheduler (DPM++ or DDIM).")
     parser.add_argument("-S", "--mbr-set-size", type=int, default=1)
     parser.add_argument("-cfg", "--cfg", type=float, default=1.0, help="Classifier-free guidance scale.")
@@ -117,7 +118,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, clamp=args.clamping_trick, cfg=args.cfg,
-                        cfg_lerp=args.cfg_lerp, length_model=args.length_model)
+                        cfg_lerp=args.cfg_lerp, length_model=args.length_model, clamp_lerp=args.clamp_lerp)
 
     # Load model
     model_config = ModelConfig.load(args.model_dir)

@@ -76,6 +76,7 @@ class EvalConfig:
     cfg: float = 1  # CFG=1 is equivalent to not using CFG
     cfg_lerp: bool = False
     clamp: bool = False
+    clamp_lerp: bool = False
     length_model: str = "oracle"
 
     def get_path(self):
@@ -86,7 +87,8 @@ class EvalConfig:
             s.append(f"cfg{extra}={self.cfg:.2f}")
         s.append(f"steps={self.nsteps}")
         if self.clamp:
-            s.append("clamp")
+            extra = "_lerp" if self.clamp_lerp else ""
+            s.append("clamp-lerp" if self.clamp_lerp else "clamp")
         if self.scheduler != "DPM++":
             s.append(self.scheduler)
         if self.length_model != "oracle":
