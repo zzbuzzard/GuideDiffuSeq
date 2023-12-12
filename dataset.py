@@ -11,6 +11,7 @@ class TextDataset(Dataset):
         self.src = []
         self.trg = []
 
+        self.root_path = root_path
         self.tokenizer = tokenizer
         self.device = device
 

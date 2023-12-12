@@ -12,6 +12,7 @@ from os.path import join
 from config import ModelConfig, EvalConfig
 from model import Model, from_config
 from dataset import TextDataset, collate
+from length_model import NormalDist
 
 device = torch.device("cuda")
 
@@ -38,6 +39,8 @@ def compute_metric(name: str, preds: List[str], gts: List[str]):
 def _eval_model_on_dataset(model: Model, dataset: TextDataset, config: EvalConfig, batch_size: int = 64):
     """Evaluates `model` on `dataset` entirely, returning two lists of strings: (preds, ground truths)."""
     eval_scheduler = config.get_scheduler(model.timesteps)
+    len_model = config.get_length_model()
+    len_model.load(dataset.root_path)
 
     gts = []
     preds = []
@@ -48,8 +51,9 @@ def _eval_model_on_dataset(model: Model, dataset: TextDataset, config: EvalConfi
     with torch.no_grad():
         it = tqdm(dl)
         for step, (xs_tok, ys_tok, xs_l, ys_l) in enumerate(it):
+            ys_l_pred = len_model.predict(xs_l, ys_l)
             xs_emb = model.embed(xs_tok)
-            toks = model.inference(xs_emb, xs_l, ys_l, eval_scheduler, config.nsteps, clamping_trick=config.clamp,
+            toks = model.inference(xs_emb, xs_l, ys_l_pred, eval_scheduler, config.nsteps, clamping_trick=config.clamp,
                                    cfg=config.cfg, cfg_lerp=config.cfg_lerp)
 
             for ind, pred in enumerate(toks):
@@ -109,9 +113,11 @@ if __name__ == "__main__":
     parser.add_argument("-S", "--mbr-set-size", type=int, default=1)
     parser.add_argument("-cfg", "--cfg", type=float, default=1.0, help="Classifier-free guidance scale.")
     parser.add_argument("-cfgl", "--cfg-lerp", action="store_true", help="Lerp CFG scale from CFG to 0")
+    parser.add_argument("-lm", "--length-model", type=str, default="oracle", help="Length model")
     args = parser.parse_args()
 
-    config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, clamp=args.clamping_trick, cfg=args.cfg, cfg_lerp=args.cfg_lerp)
+    config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, clamp=args.clamping_trick, cfg=args.cfg,
+                        cfg_lerp=args.cfg_lerp, length_model=args.length_model)
 
     # Load model
     model_config = ModelConfig.load(args.model_dir)

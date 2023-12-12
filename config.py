@@ -3,6 +3,7 @@ from os import path
 import json
 from diffusers.schedulers import DDIMScheduler, DPMSolverMultistepScheduler
 
+from length_model import LengthModel, Oracle, NormalDist, UniformDiff, Fixed
 
 @dataclass
 class ModelConfig:
@@ -75,6 +76,7 @@ class EvalConfig:
     cfg: float = 1  # CFG=1 is equivalent to not using CFG
     cfg_lerp: bool = False
     clamp: bool = False
+    length_model: str = "oracle"
 
     def get_path(self):
         # e.g. 'cfg=3.5_steps=10_clamp_DDIM'
@@ -87,6 +89,8 @@ class EvalConfig:
             s.append("clamp")
         if self.scheduler != "DPM++":
             s.append(self.scheduler)
+        if self.length_model != "oracle":
+            s.append(self.length_model)
         return "_".join(s)
 
     def get_scheduler(self, train_timesteps: int):
@@ -99,3 +103,16 @@ class EvalConfig:
                                       f"for a new diffusers scheduler by adding it to EvalConfig, so long as that"
                                       f"scheduler has support for sample prediction_type mode.")
 
+    def get_length_model(self) -> LengthModel:
+        if self.length_model == "oracle":
+            return Oracle()
+        elif self.length_model == "normal":
+            return NormalDist()
+        elif self.length_model.startswith("uniform"):
+            _, low, hi = self.length_model.split("_")
+            return UniformDiff(int(low), int(hi))
+        elif self.length_model.startswith("fixed"):
+            _, n = self.length_model.split("_")
+            return Fixed(int(n))
+        else:
+            raise NotImplementedError(f"Unknown length model '{self.length_model}'.")
