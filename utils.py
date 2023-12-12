@@ -39,6 +39,19 @@ def masked_loss(goal: torch.Tensor, pred: torch.Tensor, padding_mask: torch.Tens
     return loss
 
 
+def masked_loss_batched(goal: torch.Tensor, pred: torch.Tensor, padding_mask: torch.Tensor, lengths: torch.LongTensor):
+    """
+    Calculate MSE loss, excluding padding (padding_mask=True indicates padding).
+    This version returns the loss per batch, as is necessary for importance sampling.
+    """
+    goal = torch.where(padding_mask.unsqueeze(2), 0, goal)
+    pred = torch.where(padding_mask.unsqueeze(2), 0, pred)
+    d = (goal - pred).pow(2)
+    d = torch.mean(d, dim=2)  # Average over the embedding dimension
+    d = torch.sum(d, dim=1) / lengths  # Average over the sequence - use lengths rather than mean to account for padding
+    return d
+
+
 def save_state(root_path: str, model, opt: optim.Optimizer, epoch: int, train_data: dict):
     train_path = join(root_path, "train_data.pt")
 

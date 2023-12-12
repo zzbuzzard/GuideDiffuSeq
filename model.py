@@ -198,7 +198,7 @@ class Model(nn.Module):
             ys_pad = padding_mask(ys, ys_lengths)
 
             # Set step values
-            scheduler.set_timesteps(nsteps)
+            scheduler.set_timesteps(nsteps, device=xs.device)
 
             # Run denoising process
             for t in scheduler.timesteps:

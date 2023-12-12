@@ -13,8 +13,9 @@ from contextlib import nullcontext
 from config import TrainingConfig, ModelConfig, EvalConfig
 from model import Model, from_config
 from dataset import TextDataset, collate
-from utils import masked_loss, padding_mask, load_state, save_state
+from utils import masked_loss, masked_loss_batched, padding_mask, load_state, save_state
 from eval import eval_model
+from importance_sampler import ImportanceSampler
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 metrics = ["BLEU", "ROUGE", "sentence-BLEU"]
@@ -25,7 +26,14 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
     def train(model, scaler, ys_noised, timesteps, xs_emb, ys_emb, xs_l, ys_l):
         ys_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
         ys_mask = padding_mask(ys_emb, ys_l)
-        loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
+
+        if train_config.importance_sampling:
+            loss_batched = masked_loss_batched(ys_emb, ys_pred, padding_mask=ys_mask, lengths=ys_l)
+            imp_sampler.register(timesteps, loss_batched)
+            loss_scaled = imp_sampler.scale_losses(timesteps, loss_batched)
+            loss = torch.mean(loss_scaled)
+        else:
+            loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
 
         if mixed_precision:
             scaler.scale(loss).backward()
@@ -58,6 +66,9 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
         scaler = torch.cuda.amp.GradScaler()
     else:
         scaler = None
+
+    if train_config.importance_sampling:
+        imp_sampler = ImportanceSampler(timesteps=model.timesteps, n=10, device=device)
 
     keys = ["loss", "lr"] + [i+"-val" for i in metrics]
     for i in keys:
@@ -96,10 +107,13 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
                 bs = xs_emb.shape[0]
 
                 # Sample a random timestep for each image
-                timesteps = torch.randint(
-                    0, model_config.timesteps, (bs,), device=ys_emb.device,
-                    dtype=torch.int64
-                )
+                if train_config.importance_sampling:
+                    timesteps = imp_sampler.sample(batch_size=bs)
+                else:
+                    timesteps = torch.randint(
+                        1, model_config.timesteps, (bs,), device=ys_emb.device,
+                        dtype=torch.int64
+                    )
 
                 # Add noise
                 ys_noised = noise_scheduler.add_noise(ys_emb, noise, timesteps)
@@ -109,6 +123,9 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
             tot_loss += loss
             global_step += 1
             loss_count += 1
+
+        # if train_config.importance_sampling:
+        #     imp_sampler.visualise()
 
         wandb.log({"loss": tot_loss / loss_count, "lr": lr_scheduler.get_last_lr()[0], "epoch": epoch})
         train_data["loss"][epoch] = tot_loss / loss_count
@@ -178,7 +195,7 @@ if __name__ == "__main__":
         project="var-len-diffu-seq-3",
         name=f"{name}",
         config=asdict(train_config),
-        tags=["small"]
+        tags=[]
     )
 
     wandb.define_metric("epoch")
