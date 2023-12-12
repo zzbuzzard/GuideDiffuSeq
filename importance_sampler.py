@@ -15,13 +15,20 @@ class ImportanceSampler:
         self.ps = None
 
     def register(self, timesteps: torch.LongTensor, losses: torch.FloatTensor):
-        # It would be nice to vectorize this, but it's a bit fiddly and not too expensive
-        #  so have not implemented for now
-        (batch_size,) = losses.shape
-        for i in range(batch_size):
-            t = timesteps[i]
-            self.sq_losses[t, self.lengths[t] % self.n] = losses[i].detach() ** 2
-            self.lengths[t] += 1
+        # Vectorized version of the commented code below which is more intuitive
+        # index_offset([1, 2, 1, 1]) = [0, 0, 1, 2]
+        d = timesteps == timesteps[:, None]
+        index_offset = torch.diag(torch.cumsum(d, dim=1)) - 1
+        indices = (self.lengths[timesteps] + index_offset) % self.n
+        self.sq_losses[timesteps, indices] = losses.detach() ** 2
+        length_increases = torch.sum(d, dim=1)
+        self.lengths[timesteps] += length_increases
+
+        # (batch_size,) = losses.shape
+        # for i in range(batch_size):
+        #     t = timesteps[i]
+        #     self.sq_losses[t, self.lengths[t] % self.n] = losses[i].detach() ** 2
+        #     self.lengths[t] += 1
 
         ps = torch.mean(self.sq_losses, dim=1).sqrt()
         self.ps = ps / torch.sum(ps)
