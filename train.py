@@ -29,7 +29,8 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
 
         if train_config.importance_sampling:
             loss_batched = masked_loss_batched(ys_emb, ys_pred, padding_mask=ys_mask, lengths=ys_l)
-            imp_sampler.register(timesteps, loss_batched)
+            not_masked = xs_l > 1
+            imp_sampler.register(timesteps[not_masked], loss_batched[not_masked])
             loss_scaled = imp_sampler.scale_losses(timesteps, loss_batched)
             loss = torch.mean(loss_scaled)
         else:
