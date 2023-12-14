@@ -2,9 +2,12 @@ from dataclasses import dataclass
 from os import path
 import json
 from diffusers.schedulers import DDIMScheduler, DPMSolverMultistepScheduler
+from torch.optim.lr_scheduler import LinearLR
+from diffusers import get_cosine_schedule_with_warmup
 
 from length_model import LengthModel, Oracle, NormalDist, UniformDiff, Fixed
 from utils import sqrt_noise_schedule
+
 
 @dataclass
 class ModelConfig:
@@ -49,6 +52,7 @@ class TrainingConfig:
     learning_rate: float = 1e-4
     learning_rate_final_mul: float = 0.1
     uncond_prob: float = 0.0
+    lr_schedule: str = "linear"
 
     importance_sampling: bool = False
 
@@ -70,6 +74,21 @@ class TrainingConfig:
             data = json.loads(file.read())
 
         return TrainingConfig(**data)
+
+    def get_lr_scheduler(self, optimizer, total_steps, warmup_steps=2000):
+        if self.lr_schedule == "linear":
+            return LinearLR(optimizer=optimizer,
+                            start_factor=1,
+                            end_factor=self.learning_rate_final_mul,
+                            total_iters=total_steps)
+        elif self.lr_schedule == "cosine":
+            return get_cosine_schedule_with_warmup(
+                optimizer=optimizer,
+                num_warmup_steps=warmup_steps,
+                num_training_steps=total_steps
+            )
+        else:
+            raise NotImplementedError(f"Unknown lr schedule '{self.lr_schedule}'.")
 
 
 @dataclass

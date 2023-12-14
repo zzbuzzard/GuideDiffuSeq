@@ -218,16 +218,7 @@ if __name__ == "__main__":
 
     optimizer = optim.AdamW(model.parameters(), lr=train_config.learning_rate)
 
-    scheduler = lr_scheduler.LinearLR(optimizer=optimizer,
-                                      start_factor=1,
-                                      end_factor=train_config.learning_rate_final_mul,
-                                      total_iters=len(train_dataloader) * train_config.num_epochs)
-
-    # scheduler = get_cosine_schedule_with_warmup(
-    #     optimizer=optimizer,
-    #     num_warmup_steps=config.lr_warmup_steps,
-    #     num_training_steps=(len(train_dataloader) * config.num_epochs),
-    # )
+    lr_scheduler = train_config.get_lr_scheduler(optimizer, total_steps=len(train_dataloader) * train_config.num_epochs)
 
     train_loop(
         model_dir=args.model_dir,
@@ -236,7 +227,7 @@ if __name__ == "__main__":
         model=model,
         optimizer=optimizer,
         train_dataloader=train_dataloader,
-        lr_scheduler=scheduler,
+        lr_scheduler=lr_scheduler,
         val_dataset=val_dataset
     )
 
