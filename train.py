@@ -1,7 +1,7 @@
 import torch
 import torch.utils.data as dutils
 from torch import optim
-from torch.optim import lr_scheduler
+import torch.nn.functional as F
 from tqdm.auto import tqdm
 from diffusers import DDPMScheduler
 from dataclasses import asdict
@@ -13,7 +13,7 @@ from contextlib import nullcontext
 from config import TrainingConfig, ModelConfig, EvalConfig
 from model import Model, from_config
 from dataset import TextDataset, collate
-from utils import masked_loss, masked_loss_batched, padding_mask, load_state, save_state, sqrt_noise_schedule
+from utils import masked_loss, masked_loss_batched, padding_mask, load_state, save_state, sqrt_noise_schedule, vocab_logits
 from eval import eval_model
 from importance_sampler import ImportanceSampler
 
@@ -34,9 +34,16 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
             loss_scaled = imp_sampler.scale_losses(timesteps, loss_batched)
             loss = torch.mean(loss_scaled)
         else:
-            loss_batched = masked_loss_batched(ys_emb, ys_pred, padding_mask=ys_mask, lengths=ys_l)
-            loss = torch.mean(loss_batched)
-            # loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
+            # loss_batched = masked_loss_batched(ys_emb, ys_pred, padding_mask=ys_mask, lengths=ys_l)
+            # loss = torch.mean(loss_batched)
+            loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
+
+        if train_config.anchor_loss:
+            logits = vocab_logits(ys_pred[~ys_mask], model.embed.weight)
+            logits = torch.log_softmax(logits, dim=1)
+            # anchor_loss = -torch.mean(logits[torch.arange(logits.shape[0]), ys_tok[~ys_mask]])
+            anchor_loss = F.nll_loss(logits, ys_tok[~ys_mask])
+            loss = loss + anchor_loss
 
         if mixed_precision:
             scaler.scale(loss).backward()

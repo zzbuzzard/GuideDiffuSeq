@@ -56,6 +56,7 @@ class TrainingConfig:
 
     importance_sampling: bool = False
     normalise_embeds: bool = False
+    anchor_loss: bool = False
 
     eval_nsteps: int = 30
     seed: int = 0
