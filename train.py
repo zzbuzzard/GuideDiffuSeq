@@ -46,6 +46,9 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
             loss.backward()
             optimizer.step()
 
+        if train_config.normalise_embeds:
+            model.normalise_embeds()
+
         lr_scheduler.step()
         optimizer.zero_grad()
         return loss.item()

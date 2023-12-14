@@ -231,6 +231,12 @@ class Model(nn.Module):
             # Note: it is inefficient to compute KNN for the padding, this could be improved
             return [toks[:ys_lengths[i]] for i, toks in enumerate(tokens)]
 
+    def normalise_embeds(self):
+        eps = 1e-5
+        with torch.no_grad():
+            e = self.embed.weight.data
+            self.embed.weight[:] = (e - torch.mean(e, dim=0)) / torch.sqrt(torch.var(e, dim=0) + eps)
+
     def load(self, root_path: str):
         path = join(root_path, "model.pt")
         if not os.path.isfile(path):

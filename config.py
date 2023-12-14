@@ -55,6 +55,7 @@ class TrainingConfig:
     lr_schedule: str = "linear"
 
     importance_sampling: bool = False
+    normalise_embeds: bool = False
 
     eval_nsteps: int = 30
     seed: int = 0
