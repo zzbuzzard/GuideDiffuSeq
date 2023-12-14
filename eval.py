@@ -36,9 +36,9 @@ def compute_metric(name: str, preds: List[str], gts: List[str]):
         raise NotImplementedError(f"Unsupported metric '{name}'.")
 
 
-def _eval_model_on_dataset(model: Model, dataset: TextDataset, config: EvalConfig, batch_size: int = 64):
+def _eval_model_on_dataset(model: Model, dataset: TextDataset, model_config: ModelConfig, config: EvalConfig, batch_size: int = 64):
     """Evaluates `model` on `dataset` entirely, returning two lists of strings: (preds, ground truths)."""
-    eval_scheduler = config.get_scheduler(model.timesteps)
+    eval_scheduler = config.get_scheduler(model_config)
     len_model = config.get_length_model()
     len_model.load(dataset.root_path)
 
@@ -65,9 +65,9 @@ def _eval_model_on_dataset(model: Model, dataset: TextDataset, config: EvalConfi
     return preds, gts
 
 
-def eval_model(model: Model, dataset: TextDataset, metric_names: List[str], config: EvalConfig, batch_size: int = 64):
+def eval_model(model: Model, dataset: TextDataset, metric_names: List[str], model_config: ModelConfig, eval_config: EvalConfig, batch_size: int = 64):
     """Evaluates a model on the provided dataset and computes all requested metrics, which are returned as a dict."""
-    preds, gts = _eval_model_on_dataset(model, dataset, config, batch_size)
+    preds, gts = _eval_model_on_dataset(model, dataset, model_config, eval_config, batch_size)
 
     out = {}
     for name in metric_names:
@@ -117,8 +117,8 @@ if __name__ == "__main__":
     parser.add_argument("-lm", "--length-model", type=str, default="oracle", help="Length model")
     args = parser.parse_args()
 
-    config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, clamp=args.clamping_trick, cfg=args.cfg,
-                        cfg_lerp=args.cfg_lerp, length_model=args.length_model, clamp_lerp=args.clamp_lerp)
+    eval_config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, clamp=args.clamping_trick, cfg=args.cfg,
+                             cfg_lerp=args.cfg_lerp, length_model=args.length_model, clamp_lerp=args.clamp_lerp)
 
     # Load model
     model_config = ModelConfig.load(args.model_dir)
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     dataset = TextDataset(args.data_dir, split="test", tokenizer=model.tokenizer, device=device)
 
     # Compute all preds / load from files if computed before
-    out_dir = join(args.model_dir, "test_gen", config.get_path())
+    out_dir = join(args.model_dir, "test_gen", eval_config.get_path())
     os.makedirs(out_dir, exist_ok=True)
     print(f"Saving/loading results from {out_dir}...")
     gts = [model.tokenizer.decode(dataset[i][1]) for i in range(len(dataset))]
@@ -144,7 +144,7 @@ if __name__ == "__main__":
         else:
             print(f"Evaluating {i+1} / {args.mbr_set_size}...")
             torch.manual_seed(i)
-            preds, gts_ = _eval_model_on_dataset(model, dataset, config, batch_size=args.batch_size)
+            preds, gts_ = _eval_model_on_dataset(model, dataset, model_config, eval_config, batch_size=args.batch_size)
             with open(path, "w") as file:
                 file.write('\n'.join(preds) + '\n')
 
@@ -163,7 +163,7 @@ if __name__ == "__main__":
         out[name] = compute_metric(name, preds, gts)
 
     print("Model path:", args.model_dir)
-    print("Evaluation config:", config.get_path())
+    print("Evaluation config:", eval_config.get_path())
     print()
     print("Evaluation results:")
     print(out)

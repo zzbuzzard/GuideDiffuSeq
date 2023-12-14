@@ -6,7 +6,7 @@ from torch.optim.lr_scheduler import LinearLR
 from diffusers import get_cosine_schedule_with_warmup
 
 from length_model import LengthModel, Oracle, NormalDist, UniformDiff, Fixed
-from utils import sqrt_noise_schedule
+from utils import get_named_beta_schedule
 
 
 @dataclass
@@ -16,6 +16,8 @@ class ModelConfig:
     pos_embed_mode: str = "fixed"  # 'fixed' or 'learned'
     time_embed_mode: str = "fixed"  # 'fixed' or 'learned'
 
+    noise_schedule: str = "linear"
+
     dim: int = 768
     internal_dim: int = 768
     nhead: int = 12
@@ -23,6 +25,9 @@ class ModelConfig:
     layers_decoder: int = 12
     max_len: int = 128
     timesteps: int = 1000
+
+    def get_betas(self):
+        return get_named_beta_schedule(self.noise_schedule, self.timesteps)
 
     @staticmethod
     def load(root_path: str):
@@ -119,12 +124,12 @@ class EvalConfig:
             s.append(self.length_model)
         return "_".join(s)
 
-    def get_scheduler(self, train_timesteps: int):
-        betas = sqrt_noise_schedule(train_timesteps)
+    def get_scheduler(self, model_config: ModelConfig):
+        betas = model_config.get_betas()
         if self.scheduler == "DPM++":
-            return DPMSolverMultistepScheduler(train_timesteps, prediction_type="sample", trained_betas=betas)
+            return DPMSolverMultistepScheduler(model_config.timesteps, prediction_type="sample", trained_betas=betas)
         elif self.scheduler == "DDIM":
-            return DDIMScheduler(train_timesteps, prediction_type="sample", trained_betas=betas)
+            return DDIMScheduler(model_config.timesteps, prediction_type="sample", trained_betas=betas)
         else:
             raise NotImplementedError(f"Unknown scheduler '{self.scheduler}'. Note: it should be easy to add support"
                                       f"for a new diffusers scheduler by adding it to EvalConfig, so long as that"

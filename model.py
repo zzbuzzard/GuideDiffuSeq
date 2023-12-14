@@ -16,7 +16,7 @@ class Model(nn.Module):
     # Constructor args correspond to the fields in config.ModelConfig
     def __init__(self, embed_mode: str, dim: int, internal_dim: int, nhead: int, layers_encoder: int,
                  layers_decoder: int, max_len: int, timesteps: int, tokenizer_mode: str, pos_embed_mode: str,
-                 time_embed_mode: str):
+                 time_embed_mode: str, noise_schedule: str):
         super().__init__()
 
         self.timesteps = timesteps

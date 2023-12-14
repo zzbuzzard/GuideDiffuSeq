@@ -13,7 +13,7 @@ from contextlib import nullcontext
 from config import TrainingConfig, ModelConfig, EvalConfig
 from model import Model, from_config
 from dataset import TextDataset, collate
-from utils import masked_loss, masked_loss_batched, padding_mask, load_state, save_state, sqrt_noise_schedule, vocab_logits
+from utils import masked_loss, masked_loss_batched, padding_mask, load_state, save_state, vocab_logits
 from eval import eval_model
 from importance_sampler import ImportanceSampler
 
@@ -70,9 +70,9 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
 
     noise_scheduler = DDPMScheduler(num_train_timesteps=model_config.timesteps,
                                     prediction_type="sample",
-                                    trained_betas=sqrt_noise_schedule(model_config.timesteps))  # custom sqrt schedule
+                                    trained_betas=model_config.get_betas())  # custom sqrt schedule
     eval_config = EvalConfig(nsteps=train_config.eval_nsteps)
-    eval_scheduler = eval_config.get_scheduler(model_config.timesteps)
+    eval_scheduler = eval_config.get_scheduler(model_config)
 
     start_epoch, train_data = load_state(model_dir, model, optimizer)
     lr_scheduler.last_epoch = start_epoch * len(train_dataloader)
@@ -182,7 +182,7 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
         if epoch % train_config.eval_epochs == 0:
             print("Evaluating...")
             model.eval()
-            out = eval_model(model, val_dataset, metrics, config=eval_config, batch_size=train_config.batch_size)
+            out = eval_model(model, val_dataset, metrics, model_config=model_config, eval_config=eval_config, batch_size=train_config.batch_size)
             model.train()
             out = {i+"-val": out[i] for i in out}
             print("Metrics:", out)

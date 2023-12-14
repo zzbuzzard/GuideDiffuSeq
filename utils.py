@@ -1,9 +1,10 @@
 import os
 from os.path import join
+import numpy as np
 import torch
-from torch_cluster import knn
 import torch.nn.functional as F
 from torch import optim
+from torch_cluster import knn
 import math
 
 
@@ -112,8 +113,34 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
     return torch.Tensor(betas)
 
 
-def sqrt_noise_schedule(num_diffusion_timesteps: int):
-    return betas_for_alpha_bar(
-        num_diffusion_timesteps,
-        lambda t: 1 - math.sqrt(t + 0.0001),
-    )
+# Taken from Diffusion-LM, which was based on OpenAI's diffusion code
+def get_named_beta_schedule(schedule_name: str, num_diffusion_timesteps: int):
+    """
+    Get a pre-defined beta schedule for the given name.
+
+    The beta schedule library consists of beta schedules which remain similar
+    in the limit of num_diffusion_timesteps.
+    Beta schedules may be added, but should not be removed or changed once
+    they are committed to maintain backwards compatibility.
+    """
+    if schedule_name == "linear":
+        # Linear schedule from Ho et al, extended to work for any number of
+        # diffusion steps.
+        scale = 1000 / num_diffusion_timesteps
+        beta_start = scale * 0.0001
+        beta_end = scale * 0.02
+        return np.linspace(
+            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
+        )
+    elif schedule_name == "cosine":
+        return betas_for_alpha_bar(
+            num_diffusion_timesteps,
+            lambda t: math.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2,
+        )
+    elif schedule_name == "sqrt":
+        return betas_for_alpha_bar(
+            num_diffusion_timesteps,
+            lambda t: 1-np.sqrt(t + 0.0001),
+        )
+    else:
+        raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
