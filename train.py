@@ -209,8 +209,7 @@ if __name__ == "__main__":
     wandb.init(
         project="var-len-diffu-seq-3",
         name=f"{name}",
-        config=asdict(train_config),
-        tags=[]
+        config=asdict(train_config) | asdict(model_config),
     )
 
     wandb.define_metric("epoch")
