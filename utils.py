@@ -29,6 +29,16 @@ def clamp_to_vocab(xs: torch.Tensor, vocab: torch.Tensor):
     return knn(vocab, xs, k=1)[1]
 
 
+def vocab_logits(xs: torch.Tensor, vocab: torch.Tensor):
+    """
+    For batch size B and vocab size N, returns the negated B x N distance matrix.
+    This is much slower than clamp_to_vocab above but used for the anchor loss during training.
+    """
+    assert xs.size(-1) == vocab.size(-1), f"Expected predictions (shape {xs.shape}) and vocabulary (shape {vocab.shape})" \
+            "to have matching shape in the final dimension."
+    return -torch.cdist(xs, vocab)
+
+
 def masked_loss(goal: torch.Tensor, pred: torch.Tensor, padding_mask: torch.Tensor):
     """Calculate MSE loss, excluding padding (padding_mask=True indicates padding)"""
     masked_goal = goal[~padding_mask]
