@@ -151,10 +151,13 @@ def get_cosine_schedule_with_warmup(
     optimizer: optim.Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: float = 0.5, last_epoch: int = -1
 ):
     def lr_lambda(current_step):
-        if current_step < num_warmup_steps:
-            return np.float32(current_step) / max(1, num_warmup_steps)
+        lr1 = np.float32(current_step) / max(1, num_warmup_steps)
         progress = np.float32(current_step - num_warmup_steps) / max(1, num_training_steps - num_warmup_steps)
         val = 0.5 * (1.0 + np.cos(np.pi * np.float32(num_cycles) * 2.0 * progress))
-        return np.maximum(np.float32(0.0), val)
+        lr2 = np.maximum(np.float32(0.0), val)
+        if current_step < num_warmup_steps:
+            return lr1
+        else:
+            return lr2
 
     return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
