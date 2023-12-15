@@ -34,9 +34,9 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
             loss_scaled = imp_sampler.scale_losses(timesteps, loss_batched)
             loss = torch.mean(loss_scaled)
         else:
-            # loss_batched = masked_loss_batched(ys_emb, ys_pred, padding_mask=ys_mask, lengths=ys_l)
-            # loss = torch.mean(loss_batched)
-            loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
+            loss_batched = masked_loss_batched(ys_emb, ys_pred, padding_mask=ys_mask, lengths=ys_l)
+            loss = torch.mean(loss_batched)
+            # loss = masked_loss(ys_emb, ys_pred, padding_mask=ys_mask)
 
         if train_config.anchor_loss:
             logits = vocab_logits(ys_pred[~ys_mask], model.embed.weight)
