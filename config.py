@@ -3,10 +3,9 @@ from os import path
 import json
 from diffusers.schedulers import DDIMScheduler, DPMSolverMultistepScheduler
 from torch.optim.lr_scheduler import LinearLR
-from diffusers import get_cosine_schedule_with_warmup
 
 from length_model import LengthModel, Oracle, NormalDist, UniformDiff, Fixed
-from utils import get_named_beta_schedule
+from utils import get_named_beta_schedule, get_cosine_schedule_with_warmup
 
 
 @dataclass

@@ -144,3 +144,17 @@ def get_named_beta_schedule(schedule_name: str, num_diffusion_timesteps: int):
         )
     else:
         raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
+
+
+# From diffusers, modified to work with torch.compile
+def get_cosine_schedule_with_warmup(
+    optimizer: optim.Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: float = 0.5, last_epoch: int = -1
+):
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return torch.tensor(float(current_step)) / max(1, num_warmup_steps)
+        progress = torch.tensor(float(current_step - num_warmup_steps)) / torch.tensor(float(max(1, num_training_steps - num_warmup_steps)))
+        val = 0.5 * (1.0 + torch.cos(torch.pi * float(num_cycles) * 2.0 * progress))
+        return torch.maximum(torch.tensor(0.0), val)
+
+    return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
