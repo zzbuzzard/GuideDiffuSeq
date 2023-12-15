@@ -152,9 +152,9 @@ def get_cosine_schedule_with_warmup(
 ):
     def lr_lambda(current_step):
         if current_step < num_warmup_steps:
-            return torch.tensor(float(current_step)) / max(1, num_warmup_steps)
-        progress = torch.tensor(float(current_step - num_warmup_steps)) / torch.tensor(float(max(1, num_training_steps - num_warmup_steps)))
-        val = 0.5 * (1.0 + torch.cos(torch.pi * float(num_cycles) * 2.0 * progress))
-        return torch.maximum(torch.tensor(0.0), val)
+            return np.float32(current_step) / max(1, num_warmup_steps)
+        progress = np.float32(current_step - num_warmup_steps) / max(1, num_training_steps - num_warmup_steps)
+        val = 0.5 * (1.0 + np.cos(np.pi * np.float32(num_cycles) * 2.0 * progress))
+        return np.maximum(np.float32(0.0), val)
 
     return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
