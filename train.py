@@ -23,7 +23,7 @@ metrics = ["BLEU", "ROUGE", "sentence-BLEU"]
 
 def train_loop(model_dir: str, train_config: TrainingConfig, model_config: ModelConfig, model: Model, optimizer,
                train_dataloader, lr_scheduler, val_dataset):
-    def train(model, scaler, ys_noised, timesteps, xs_emb, ys_emb, xs_l, ys_l):
+    def train(model, scaler, ys_noised, timesteps, xs_emb, ys_emb, xs_l, ys_l, ys_tok):
         ys_pred = model.forward(xs_emb, ys_noised, xs_l, ys_l, timesteps)
         ys_mask = padding_mask(ys_emb, ys_l)
 
@@ -133,7 +133,7 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
                 # Add noise
                 ys_noised = noise_scheduler.add_noise(ys_emb, noise, timesteps)
 
-                loss = train(model, scaler, ys_noised, timesteps, xs_emb, ys_emb, xs_l, ys_l)
+                loss = train(model, scaler, ys_noised, timesteps, xs_emb, ys_emb, xs_l, ys_l, ys_tok)
 
             tot_loss += loss
             global_step += 1
