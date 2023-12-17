@@ -19,6 +19,7 @@ class Model(nn.Module):
                  layers_decoder: int, max_len: int, timesteps: int, tokenizer_mode: str, pos_embed_mode: str,
                  time_embed_mode: str, noise_schedule: str):
         super().__init__()
+        self.eps = 1e-5
 
         self.timesteps = timesteps
         self.dim = dim
@@ -267,10 +268,10 @@ class Model(nn.Module):
             return [toks[:ys_lengths[i]] for i, toks in enumerate(tokens)]
 
     def normalise_embeds(self):
-        eps = 1e-5
         with torch.no_grad():
             e = self.embed.weight.data
-            self.embed.weight[:] = (e - torch.mean(e, dim=0)) / torch.sqrt(torch.var(e, dim=0) + eps)
+            # self.embed.weight[:] = (e - torch.mean(e, dim=0)) / torch.sqrt(torch.var(e, dim=0) + eps)
+            self.embed.weight[:] = (e - torch.mean(e, dim=1, keepdim=True)) / torch.sqrt(torch.var(e, dim=1, keepdim=True) + self.eps)
 
     def load(self, root_path: str):
         path = join(root_path, "model.pt")

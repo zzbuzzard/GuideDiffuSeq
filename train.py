@@ -45,6 +45,11 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
             anchor_loss = F.nll_loss(logits, ys_tok[~ys_mask])
             loss = loss + anchor_loss
 
+        if train_config.norm_loss != 0:
+            mean_loss = torch.mean(ys_pred[~ys_mask], dim=1).square().mean()
+            std_loss = (torch.var(ys_pred[~ys_mask], dim=1) - 1).square().mean()
+            loss = loss + (mean_loss + std_loss) * train_config.norm_loss
+
         if mixed_precision:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
