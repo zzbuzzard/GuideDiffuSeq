@@ -155,8 +155,7 @@ def train_loop(model_dir: str, train_config: TrainingConfig, model_config: Model
             mx_num = 8
 
             model.eval()
-            toks = model.inference(xs_emb[:mx_num], xs_l[:mx_num], ys_l[:mx_num], eval_scheduler,
-                                   train_config.eval_nsteps)
+            toks = model.inference(xs_emb[:mx_num], xs_l[:mx_num], ys_l[:mx_num], eval_scheduler, config=eval_config)
             model.train()
 
             log_tbl = wandb.Table(columns=["Steps", "Input", "Ground Truth", "Output"])

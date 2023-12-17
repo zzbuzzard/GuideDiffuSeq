@@ -7,9 +7,10 @@ import math
 from diffusers.schedulers import SchedulerMixin
 from transformers import BertTokenizerFast
 from tqdm import tqdm
+from typing import Callable, Any
 
 from utils import padding_mask, clamp_to_vocab
-from config import ModelConfig
+from config import ModelConfig, EvalConfig
 
 
 class Model(nn.Module):
@@ -161,13 +162,22 @@ class Model(nn.Module):
         )
         return self.down_proj(out)
 
-    def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, nsteps: int, clamping_trick: bool = False,
-                  clamp_lerp: bool = False, cfg: float = 1, cfg_lerp: bool = False):
+    def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, config: EvalConfig,
+                  callback: Callable[[torch.Tensor, int], Any] = None):
         """
         Carries out the complete denoising inference procedure for the given token inputs `xs`.
         Note: `xs` is expected to be embedded and padded, as during training.
         Requires the lengths `ys_lengths` of the outputs to be specified, then generates `ys`.
         """
+        def clamp(xs, t):
+            closest_tokens = clamp_to_vocab(xs, self.embed.weight)
+            emb = self.embed(closest_tokens)
+            # Complete transition when t=0, no transition when t=T
+            amount = 1 - t / self.timesteps if config.clamp_lerp else 1
+            return xs + amount * (emb - xs)
+
+        skip_cfg = config.cfg == 1 and config.cfg_mode == "constant"
+
         with torch.no_grad():
             batch_size, _, dim = xs.shape
             assert dim == self.dim, f"Condition has dimension {dim}, expected {self.dim}."
@@ -183,7 +193,7 @@ class Model(nn.Module):
                 src_key_padding_mask=xs_pad
             )
 
-            if cfg != 1:
+            if not skip_cfg:
                 # Precompute the encoder output in the masked case too
                 uncond_xs = torch.tensor([self.tokenizer.mask_token_id] * batch_size, device=xs.device, dtype=torch.long)[:, None]
                 uncond_xs = self.embed(uncond_xs)
@@ -198,7 +208,7 @@ class Model(nn.Module):
             ys_pad = padding_mask(ys, ys_lengths)
 
             # Set step values
-            scheduler.set_timesteps(nsteps, device=xs.device)
+            scheduler.set_timesteps(config.nsteps, device=xs.device)
 
             # Run denoising process
             for t in scheduler.timesteps:
@@ -206,21 +216,46 @@ class Model(nn.Module):
                 # model_output = self.forward(xs, ys, xs_lengths, ys_lengths, timesteps)
                 model_output = self.forward_with_encoder_output(encoder_out, xs_pad, ys, ys_pad, timesteps)
 
-                if cfg != 1:
+                if skip_cfg:
+                    if config.clamp_mode > 0:
+                        model_output = clamp(model_output, t)
+                else:
                     # model_output_uncond = self.forward(uncond_xs, ys, uncond_xs_lengths, ys_lengths, timesteps)
                     # Compute unconditional prediction
                     model_output_uncond = self.forward_with_encoder_output(uncond_encoder_out, uncond_xs_pad, ys, ys_pad, timesteps)
+
+                    if config.cfg_mode == "constant":
+                        scale = 1
+                    elif config.cfg_mode == "lerp":
+                        scale = t / self.timesteps
+                    elif config.cfg_mode == "alpha":
+                        scale = torch.sqrt(1 - scheduler.alphas_cumprod[t])
+                    else:
+                        raise NotImplementedError(f"cfg_mode must be one of 'lerp', 'constant' or 'alpha'.")
+
                     # Apply CFG
-                    scale = cfg if not cfg_lerp else cfg * t / self.timesteps
-                    model_output = model_output_uncond + scale * (model_output - model_output_uncond)
+                    if config.clamp_mode == 0:  # no clamping
+                        model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
+                    elif config.clamp_mode == 1:
+                        model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
+                        model_output = clamp(model_output, t)
+                    elif config.clamp_mode == 2:
+                        model_output = clamp(model_output, t)
+                        model_output_uncond = clamp(model_output_uncond, t)
+                        model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
+                    elif config.clamp_mode == 3:
+                        model_output = clamp(model_output, t)
+                        model_output_uncond = clamp(model_output_uncond, t)
+                        model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
+                        model_output = clamp(model_output, t)
+                    elif config.clamp_mode == 4:
+                        model_output_uncond = clamp(model_output_uncond, t)
+                        model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
+                    else:
+                        raise NotImplementedError(f"Unknown clamp mode: '{config.clamp_mode}'.")
 
-                if clamping_trick:
-                    closest_tokens = clamp_to_vocab(model_output, self.embed.weight)
-                    emb = self.embed(closest_tokens)
-
-                    # Complete transition when t=0, no transition when t=T
-                    amount = 1 - t / self.timesteps if clamp_lerp else 1
-                    model_output = model_output + amount * (emb - model_output)
+                if callback is not None:
+                    callback(model_output, t)
 
                 ys = scheduler.step(model_output, t, ys).prev_sample
 

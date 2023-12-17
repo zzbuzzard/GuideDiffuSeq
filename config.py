@@ -102,21 +102,27 @@ class EvalConfig:
     scheduler: str = "DPM++"  # DPM++ or DDIM
     nsteps: int = 30
     cfg: float = 1  # CFG=1 is equivalent to not using CFG
-    cfg_lerp: bool = False
-    clamp: bool = False
+    cfg_mode: str = "constant"  # | "lerp" | "alpha"
+
+    # mode 0 = no clamping i.e. cfg(cond, uncond)
+    # mode 1 = clamp(cfg(cond, uncond))
+    # mode 2 = cfg(clamp(cond), clamp(uncond))
+    # mode 3 = cfg(cond, clamp(uncond))
+    clamp_mode: int = 0  # 0 | 1 | 2 | 3
     clamp_lerp: bool = False
+
     length_model: str = "oracle"
 
     def get_path(self):
         # e.g. 'cfg=3.5_steps=10_clamp_DDIM'
         s = []
-        if self.cfg != 1:
-            extra = "_lerp" if self.cfg_lerp else ""
+        if self.cfg != 1 or self.cfg_mode != "constant":
+            extra = "_"+self.cfg_mode if self.cfg_mode != "constant" else ""
             s.append(f"cfg{extra}={self.cfg:.2f}")
         s.append(f"steps={self.nsteps}")
-        if self.clamp:
-            extra = "_lerp" if self.clamp_lerp else ""
-            s.append("clamp-lerp" if self.clamp_lerp else "clamp")
+        if self.clamp_mode > 0:
+            extra = str(self.clamp_mode) if self.clamp_mode != 1 else ""
+            s.append(("clamp-lerp" if self.clamp_lerp else "clamp") + extra)
         if self.scheduler != "DPM++":
             s.append(self.scheduler)
         if self.length_model != "oracle":

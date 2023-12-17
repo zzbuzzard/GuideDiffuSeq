@@ -36,7 +36,7 @@ def compute_metric(name: str, preds: List[str], gts: List[str]):
         raise NotImplementedError(f"Unsupported metric '{name}'.")
 
 
-def _eval_model_on_dataset(model: Model, dataset: TextDataset, model_config: ModelConfig, config: EvalConfig, batch_size: int = 64):
+def _eval_model_on_dataset(model: Model, dataset: TextDataset, model_config: ModelConfig, config: EvalConfig, batch_size: int = 64, callback = None):
     """Evaluates `model` on `dataset` entirely, returning two lists of strings: (preds, ground truths)."""
     eval_scheduler = config.get_scheduler(model_config)
     len_model = config.get_length_model()
@@ -53,8 +53,7 @@ def _eval_model_on_dataset(model: Model, dataset: TextDataset, model_config: Mod
         for step, (xs_tok, ys_tok, xs_l, ys_l) in enumerate(it):
             ys_l_pred = len_model.predict(xs_l, ys_l)
             xs_emb = model.embed(xs_tok)
-            toks = model.inference(xs_emb, xs_l, ys_l_pred, eval_scheduler, config.nsteps, clamping_trick=config.clamp,
-                                   clamp_lerp=config.clamp_lerp, cfg=config.cfg, cfg_lerp=config.cfg_lerp)
+            toks = model.inference(xs_emb, xs_l, ys_l_pred, eval_scheduler, config, callback=callback)
 
             for ind, pred in enumerate(toks):
                 gt = ys_tok[ind][:ys_l[ind]]
@@ -101,6 +100,33 @@ def mbr_select(predss: List[List[str]]) -> List[str]:
     return out
 
 
+def get_preds(model_dir, model, dataset, model_config: ModelConfig, eval_config: EvalConfig, seed: int = 0,
+              batch_size: int = 128):
+    out_dir = join(model_dir, "test_gen", eval_config.get_path())
+    os.makedirs(out_dir, exist_ok=True)
+    print(f"Saving/loading results from {out_dir}...")
+
+    path = join(out_dir, f"{seed}.txt")
+
+    if os.path.isfile(path):
+        with open(path, "r") as file:
+            preds = [i.strip() for i in file.readlines()]
+    else:
+        torch.manual_seed(seed)
+        preds, _ = _eval_model_on_dataset(model, dataset, model_config, eval_config, batch_size=batch_size)
+        with open(path, "w") as file:
+            file.write('\n'.join(preds) + '\n')
+
+    return preds
+
+
+def compute_metrics(preds, gts, metric_names):
+    out = {}
+    for name in metric_names:
+        out[name] = compute_metric(name, preds, gts)
+    return out
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--model-dir", required=True, help="Path to model directory. Must contain "
@@ -108,17 +134,17 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--data-dir", required=True, help="Path to data directory.")
     parser.add_argument("-n", "--nsteps", type=int, default=30, help="Number of steps to use for sampling.")
     parser.add_argument("-b", "--batch_size", type=int, default=256, help="Batch size.")
-    parser.add_argument("-c", "--clamping-trick", action="store_true", help="See Diffusion-LM paper for details.")
     parser.add_argument("-cl", "--clamp-lerp", action="store_true", help="Lerp clamp strength over time")
+    parser.add_argument("-cm", "--clamp-mode", type=int, default=0, help="Clamp mode (0, 1, 2, 3).")
     parser.add_argument("-s", "--scheduler", type=str, default="DPM++", help="Scheduler (DPM++ or DDIM).")
     parser.add_argument("-S", "--mbr-set-size", type=int, default=1)
     parser.add_argument("-cfg", "--cfg", type=float, default=1.0, help="Classifier-free guidance scale.")
-    parser.add_argument("-cfgl", "--cfg-lerp", action="store_true", help="Lerp CFG scale from CFG to 0")
+    parser.add_argument("-cfgm", "--cfg-mode", type=str, default="constant", help="constant | lerp | alpha")
     parser.add_argument("-lm", "--length-model", type=str, default="oracle", help="Length model")
     args = parser.parse_args()
 
-    eval_config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, clamp=args.clamping_trick, cfg=args.cfg,
-                             cfg_lerp=args.cfg_lerp, length_model=args.length_model, clamp_lerp=args.clamp_lerp)
+    eval_config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, cfg=args.cfg, cfg_mode=args.cfg_mode,
+                             length_model=args.length_model, clamp_lerp=args.clamp_lerp, clamp_mode=args.clamp_mode)
 
     # Load model
     model_config = ModelConfig.load(args.model_dir)
@@ -130,40 +156,22 @@ if __name__ == "__main__":
     dataset = TextDataset(args.data_dir, split="test", tokenizer=model.tokenizer, device=device)
 
     # Compute all preds / load from files if computed before
-    out_dir = join(args.model_dir, "test_gen", eval_config.get_path())
-    os.makedirs(out_dir, exist_ok=True)
-    print(f"Saving/loading results from {out_dir}...")
     gts = [model.tokenizer.decode(dataset[i][1]) for i in range(len(dataset))]
     predss = []
     for i in range(args.mbr_set_size):
-        path = join(out_dir, f"{i}.txt")
-
-        if os.path.isfile(path):
-            with open(path, "r") as file:
-                preds = [i.strip() for i in file.readlines()]
-        else:
-            print(f"Evaluating {i+1} / {args.mbr_set_size}...")
-            torch.manual_seed(i)
-            preds, gts_ = _eval_model_on_dataset(model, dataset, model_config, eval_config, batch_size=args.batch_size)
-            with open(path, "w") as file:
-                file.write('\n'.join(preds) + '\n')
-
-            assert gts_ == gts  # just a sanity check
-
+        preds = get_preds(args.model_dir, model, dataset, model_config, eval_config, seed=i, batch_size=args.batch_size)
         predss.append(preds)
-
     # Run MBR decoding to obtain a single list of preds
     preds = mbr_select(predss)
 
     metric_names = ["BLEU", "ROUGE", "sentence-BLEU"]
 
-    # Compute all metrics
-    out = {}
-    for name in metric_names:
-        out[name] = compute_metric(name, preds, gts)
+    out = compute_metrics(preds, gts, metric_names)
 
     print("Model path:", args.model_dir)
     print("Evaluation config:", eval_config.get_path())
     print()
     print("Evaluation results:")
-    print(out)
+    print(str(out).replace(", ",",\t"))
+
+
