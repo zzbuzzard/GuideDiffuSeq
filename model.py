@@ -255,6 +255,12 @@ class Model(nn.Module):
                     else:
                         raise NotImplementedError(f"Unknown clamp mode: '{config.clamp_mode}'.")
 
+                if config.normalise:
+                    normalised = (model_output - torch.mean(model_output, dim=2, keepdim=True)) / torch.sqrt(
+                        torch.var(model_output, dim=2, keepdim=True) + self.eps)
+                    lerp = 1 - t / self.timesteps  # effect is small for large t, and large for small t
+                    model_output = model_output + lerp * (normalised - model_output)
+
                 if callback is not None:
                     callback(model_output, ys_pad, t.item())
 

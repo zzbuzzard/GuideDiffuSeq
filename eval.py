@@ -170,10 +170,12 @@ if __name__ == "__main__":
     parser.add_argument("-cfg", "--cfg", type=float, default=1.0, help="Classifier-free guidance scale.")
     parser.add_argument("-cfgm", "--cfg-mode", type=str, default="constant", help="constant | lerp | alpha")
     parser.add_argument("-lm", "--length-model", type=str, default="oracle", help="Length model")
+    parser.add_argument("-no", "--normalise", action="store_true", help="Normalise embeds at each step")
     args = parser.parse_args()
 
     eval_config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, cfg=args.cfg, cfg_mode=args.cfg_mode,
-                             length_model=args.length_model, clamp_lerp=args.clamp_lerp, clamp_mode=args.clamp_mode)
+                             length_model=args.length_model, clamp_lerp=args.clamp_lerp, clamp_mode=args.clamp_mode,
+                             normalise=args.normalise)
 
     # Load model
     model_config = ModelConfig.load(args.model_dir)

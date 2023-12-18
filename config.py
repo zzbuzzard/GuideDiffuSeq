@@ -112,6 +112,8 @@ class EvalConfig:
     clamp_mode: int = 0  # 0 | 1 | 2 | 3
     clamp_lerp: bool = False
 
+    normalise: bool = False
+
     length_model: str = "oracle"
 
     def get_path(self):
@@ -124,6 +126,8 @@ class EvalConfig:
         if self.clamp_mode > 0:
             extra = str(self.clamp_mode) if self.clamp_mode != 1 else ""
             s.append(("clamp-lerp" if self.clamp_lerp else "clamp") + extra)
+        if self.normalise:
+            s.append("norm")
         if self.scheduler != "DPM++":
             s.append(self.scheduler)
         if self.length_model != "oracle":
