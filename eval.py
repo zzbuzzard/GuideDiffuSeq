@@ -2,12 +2,14 @@ import torch
 import torch.utils.data as dutils
 import numpy as np
 import argparse
-from torchmetrics.functional.text import bleu_score, rouge_score
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+# from nltk.translate.bleu_score import sentence_bleu, corpus_bleu, SmoothingFunction
+from sacrebleu import corpus_bleu, sentence_bleu
+from rouge import Rouge
 from typing import List
 from tqdm import tqdm
 import os
 from os.path import join
+import matplotlib.pyplot as plt
 
 from config import ModelConfig, EvalConfig
 from model import Model, from_config
@@ -17,26 +19,53 @@ from length_model import NormalDist
 device = torch.device("cuda")
 
 
-# Taken from DiffuSeq
 def get_sentence_bleu(pred: str, gt: str):
-    return sentence_bleu([gt.split()], pred.split(), smoothing_function=SmoothingFunction().method4)
+    return sentence_bleu(pred, [gt]).score
+
+    # DiffuSeq version: (using NLTK sentence_bleu)
+    # return sentence_bleu([gt.split()], pred.split(), smoothing_function=SmoothingFunction().method4)
+
+
+def self_bleu(hyps: List[List[str]]):
+    """
+    Computes self-BLEU using sacreBLEU. `hyps` should be a list of possible hypotheses for each input, i.e.
+     hyps = [[pred1_version1, pred1_version2, ...], [pred2_version1, ...], ...]
+     where each version of pred1 was generated from the same condition.
+    """
+    total = 0
+    for versions in hyps:
+        refs = []
+        for i in range(len(versions)):
+            # The references for versions[i] are all the other versions, except i
+            refs.append(versions[:i] + versions[i+1:])
+
+        # Currently, refs[i] = (list of refs for version i)
+        # but sacre-BLEU expects refs[i] = (ith ref for version 1, ith ref for version 2, ...)
+        # to fix this we just transpose:
+        refs = list(zip(*refs))
+
+        total += corpus_bleu(versions, refs).score
+
+    return total / len(hyps)
 
 
 def compute_metric(name: str, preds: List[str], gts: List[str]):
     """Computes a given metric on a list of preds and gts."""
     name = name.upper()
     if name == "BLEU":
-        return bleu_score(preds, gts).item()
+        return corpus_bleu(preds, [gts]).score
+    # This (sentence-bleu) is not how BLEU should be calculated, but unfortunately I have seen it done.
+    # I don't report the results of this, but keep it here for comparison.
     elif name == "SENTENCE-BLEU":
         scores = [get_sentence_bleu(pred, gt) for pred, gt in zip(preds, gts)]
         return sum(scores) / len(scores)
     elif name == "ROUGE":
-        return rouge_score(preds, gts)["rougeL_fmeasure"].item()
+        return Rouge().get_scores(preds, gts, avg=True)["rouge-l"]["f"]
     else:
         raise NotImplementedError(f"Unsupported metric '{name}'.")
 
 
-def _eval_model_on_dataset(model: Model, dataset: TextDataset, model_config: ModelConfig, config: EvalConfig, batch_size: int = 64, callback = None):
+def _eval_model_on_dataset(model: Model, dataset: TextDataset, model_config: ModelConfig, config: EvalConfig, batch_size: int = 64, callback=None):
     """Evaluates `model` on `dataset` entirely, returning two lists of strings: (preds, ground truths)."""
     eval_scheduler = config.get_scheduler(model_config)
     len_model = config.get_length_model()

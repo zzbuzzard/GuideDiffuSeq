@@ -164,7 +164,7 @@ class Model(nn.Module):
         return self.down_proj(out)
 
     def inference(self, xs, xs_lengths, ys_lengths, scheduler: SchedulerMixin, config: EvalConfig,
-                  callback: Callable[[torch.Tensor, int], Any] = None):
+                  callback: Callable[[torch.Tensor, torch.BoolTensor, int], Any] = None):
         """
         Carries out the complete denoising inference procedure for the given token inputs `xs`.
         Note: `xs` is expected to be embedded and padded, as during training.
@@ -256,7 +256,7 @@ class Model(nn.Module):
                         raise NotImplementedError(f"Unknown clamp mode: '{config.clamp_mode}'.")
 
                 if callback is not None:
-                    callback(model_output, t)
+                    callback(model_output, ys_pad, t.item())
 
                 ys = scheduler.step(model_output, t, ys).prev_sample
 
