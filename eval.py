@@ -3,12 +3,14 @@ import torch.utils.data as dutils
 import numpy as np
 import argparse
 # from nltk.translate.bleu_score import sentence_bleu, corpus_bleu, SmoothingFunction
+import nltk.translate.bleu_score as nltk
 from sacrebleu import corpus_bleu, sentence_bleu
 from rouge import Rouge
 from typing import List
 from tqdm import tqdm
 import os
 from os.path import join
+import bert_score
 import matplotlib.pyplot as plt
 
 from config import ModelConfig, EvalConfig
@@ -26,7 +28,7 @@ def get_sentence_bleu(pred: str, gt: str):
     # return sentence_bleu([gt.split()], pred.split(), smoothing_function=SmoothingFunction().method4)
 
 
-def self_bleu(hyps: List[List[str]]):
+def self_bleu(hyps: List[List[str]], sacrebleu=True):
     """
     Computes self-BLEU using sacreBLEU. `hyps` should be a list of possible hypotheses for each input, i.e.
      hyps = [[pred1_version1, pred1_version2, ...], [pred2_version1, ...], ...]
@@ -34,17 +36,22 @@ def self_bleu(hyps: List[List[str]]):
     """
     total = 0
     for versions in hyps:
-        refs = []
+        if len(versions) == 1:
+            total += 100
+            continue
+        refs: List[List[str]] = []
         for i in range(len(versions)):
             # The references for versions[i] are all the other versions, except i
-            refs.append(versions[:i] + versions[i+1:])
+            refs.append(versions[:i] + versions[i + 1:])
 
-        # Currently, refs[i] = (list of refs for version i)
-        # but sacre-BLEU expects refs[i] = (ith ref for version 1, ith ref for version 2, ...)
-        # to fix this we just transpose:
-        refs = list(zip(*refs))
-
-        total += corpus_bleu(versions, refs).score
+        if sacrebleu:
+            # Currently, refs[i] = (list of refs for version i)
+            # but sacre-BLEU expects refs[i] = (ith ref for version 1, ith ref for version 2, ...)
+            # to fix this we just transpose:
+            refs = list(zip(*refs))
+            total += corpus_bleu(versions, refs).score
+        else:
+            total += nltk.corpus_bleu([[i.split() for i in j] for j in refs], [i.split() for i in versions]) * 100
 
     return total / len(hyps)
 
@@ -52,20 +59,29 @@ def self_bleu(hyps: List[List[str]]):
 def compute_metric(name: str, preds: List[str], gts: List[str]):
     """Computes a given metric on a list of preds and gts."""
     name = name.upper()
-    if name == "BLEU":
+    if name in ["BLEU", "BLEU-4"]:
         return corpus_bleu(preds, [gts]).score
+    if name in ["NLTK-BLEU"]:
+        return nltk.corpus_bleu([[i.split()] for i in gts], [i.split() for i in preds]) * 100
     # This (sentence-bleu) is not how BLEU should be calculated, but unfortunately I have seen it done.
     # I don't report the results of this, but keep it here for comparison.
     elif name == "SENTENCE-BLEU":
         scores = [get_sentence_bleu(pred, gt) for pred, gt in zip(preds, gts)]
         return sum(scores) / len(scores)
-    elif name == "ROUGE":
-        return Rouge().get_scores(preds, gts, avg=True)["rouge-l"]["f"]
+    elif name in ["ROUGE", "ROUGE-L"]:
+        return Rouge().get_scores(preds, gts, avg=True)["rouge-l"]["f"] * 100
+    elif name == "BERT-SCORE":
+        (_, _, f1), bert_hash = bert_score.score(preds, gts, lang="en", return_hash=True, device="cuda",
+                                                 model_type="microsoft/deberta-xlarge-mnli", batch_size=8)
+        print("BERTScore hash:", bert_hash)
+        print("BERTScore:", f1.mean().item())
+        return f1.mean().item()
     else:
         raise NotImplementedError(f"Unsupported metric '{name}'.")
 
 
-def _eval_model_on_dataset(model: Model, dataset: TextDataset, model_config: ModelConfig, config: EvalConfig, batch_size: int = 64, callback=None):
+def _eval_model_on_dataset(model: Model, dataset: TextDataset, model_config: ModelConfig, config: EvalConfig,
+                           batch_size: int = 64, callback=None):
     """Evaluates `model` on `dataset` entirely, returning two lists of strings: (preds, ground truths)."""
     eval_scheduler = config.get_scheduler(model_config)
     len_model = config.get_length_model()
@@ -93,7 +109,8 @@ def _eval_model_on_dataset(model: Model, dataset: TextDataset, model_config: Mod
     return preds, gts
 
 
-def eval_model(model: Model, dataset: TextDataset, metric_names: List[str], model_config: ModelConfig, eval_config: EvalConfig, batch_size: int = 64):
+def eval_model(model: Model, dataset: TextDataset, metric_names: List[str], model_config: ModelConfig,
+               eval_config: EvalConfig, batch_size: int = 64):
     """Evaluates a model on the provided dataset and computes all requested metrics, which are returned as a dict."""
     preds, gts = _eval_model_on_dataset(model, dataset, model_config, eval_config, batch_size)
 
@@ -171,11 +188,12 @@ if __name__ == "__main__":
     parser.add_argument("-cfgm", "--cfg-mode", type=str, default="constant", help="constant | lerp | alpha")
     parser.add_argument("-lm", "--length-model", type=str, default="oracle", help="Length model")
     parser.add_argument("-no", "--normalise", action="store_true", help="Normalise embeds at each step")
+    parser.add_argument("-t", "--temperature", type=float, default=0, help="Temperature for final token sampling.")
     args = parser.parse_args()
 
     eval_config = EvalConfig(scheduler=args.scheduler, nsteps=args.nsteps, cfg=args.cfg, cfg_mode=args.cfg_mode,
                              length_model=args.length_model, clamp_lerp=args.clamp_lerp, clamp_mode=args.clamp_mode,
-                             normalise=args.normalise)
+                             normalise=args.normalise, temperature=args.temperature)
 
     # Load model
     model_config = ModelConfig.load(args.model_dir)
@@ -203,6 +221,4 @@ if __name__ == "__main__":
     print("Evaluation config:", eval_config.get_path())
     print()
     print("Evaluation results:")
-    print(str(out).replace(", ",",\t"))
-
-
+    print(str(out).replace(", ", ",\t"))

@@ -112,6 +112,8 @@ class EvalConfig:
     clamp_mode: int = 0  # 0 | 1 | 2 | 3
     clamp_lerp: bool = False
 
+    temperature: float = 0
+
     normalise: bool = False
 
     length_model: str = "oracle"
@@ -132,6 +134,8 @@ class EvalConfig:
             s.append(self.scheduler)
         if self.length_model != "oracle":
             s.append(self.length_model)
+        if self.temperature != 0:
+            s.append(f"temp={self.temperature:.2f}")
         return "_".join(s)
 
     def get_scheduler(self, model_config: ModelConfig):

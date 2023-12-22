@@ -9,7 +9,7 @@ from transformers import BertTokenizerFast
 from tqdm import tqdm
 from typing import Callable, Any
 
-from utils import padding_mask, clamp_to_vocab
+from utils import padding_mask, clamp_to_vocab_nopad, vocab_logits
 from config import ModelConfig, EvalConfig
 
 
@@ -170,8 +170,31 @@ class Model(nn.Module):
         Note: `xs` is expected to be embedded and padded, as during training.
         Requires the lengths `ys_lengths` of the outputs to be specified, then generates `ys`.
         """
+        def clamp_to_vocab_stochastic(ys):
+            if config.temperature == 0:
+                # Clamp ys to the vocab
+                return clamp_to_vocab_nopad(ys, ys_pad, self.embed.weight)
+            else:
+                # Compute logits for non-padding items only
+                logits = vocab_logits(ys[~ys_pad], self.embed.weight) / config.temperature
+                probs = torch.softmax(logits, dim=1)
+                dist = torch.distributions.categorical.Categorical(probs=probs)
+
+                tokens = torch.full_like(ys_pad, fill_value=self.tokenizer.pad_token_id, dtype=torch.long)
+                tokens[~ys_pad] = dist.sample()  # populate only non-padding locations
+
+                return tokens
+
+                # This version considers only the top 100 and uses less memory, but I found that `vocab_logits` is the
+                #  real bottleneck so have left it out.
+                # top_logits, logit_indices = torch.topk(logits, k=100, dim=2)
+                # probs = torch.softmax(top_logits, dim=2)
+                # dist = torch.distributions.categorical.Categorical(probs=probs)
+                # indices = dist.sample()
+                # tokens = logit_indices[torch.arange(batch_size).unsqueeze(1), torch.arange(max_ys_len).unsqueeze(0), indices]
+
         def clamp(xs, t):
-            closest_tokens = clamp_to_vocab(xs, self.embed.weight)
+            closest_tokens = clamp_to_vocab_stochastic(xs)
             emb = self.embed(closest_tokens)
             # Complete transition when t=0, no transition when t=T
             amount = 1 - t / self.timesteps if config.clamp_lerp else 1
@@ -205,7 +228,7 @@ class Model(nn.Module):
                     src_key_padding_mask=uncond_xs_pad
                 )
 
-            # Finally, precompute ys_pad as this does not change during inference
+            # Precompute ys_pad as this does not change during inference
             ys_pad = padding_mask(ys, ys_lengths)
 
             # Set step values
@@ -218,7 +241,10 @@ class Model(nn.Module):
                 model_output = self.forward_with_encoder_output(encoder_out, xs_pad, ys, ys_pad, timesteps)
 
                 if skip_cfg:
-                    if config.clamp_mode > 0:
+                    if callback is not None:
+                        callback(model_output, ys_pad, t.item())
+
+                    if config.clamp_mode != 0:
                         model_output = clamp(model_output, t)
                 else:
                     # model_output_uncond = self.forward(uncond_xs, ys, uncond_xs_lengths, ys_lengths, timesteps)
@@ -237,14 +263,14 @@ class Model(nn.Module):
                     # Apply CFG
                     if config.clamp_mode == 0:  # no clamping
                         model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
-                    elif config.clamp_mode == 1:
+                    elif config.clamp_mode == 1:  # cfg-before-clamp [bad]
                         model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
                         model_output = clamp(model_output, t)
-                    elif config.clamp_mode == 2:
+                    elif config.clamp_mode == 2:  # clamp-before-cfg [good]
                         model_output = clamp(model_output, t)
                         model_output_uncond = clamp(model_output_uncond, t)
                         model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
-                    elif config.clamp_mode == 3:
+                    elif config.clamp_mode == 3:  # clamp -> cfg -> clamp
                         model_output = clamp(model_output, t)
                         model_output_uncond = clamp(model_output_uncond, t)
                         model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
@@ -255,19 +281,18 @@ class Model(nn.Module):
                     else:
                         raise NotImplementedError(f"Unknown clamp mode: '{config.clamp_mode}'.")
 
+                    if callback is not None:
+                        callback(model_output, ys_pad, t.item())
+
                 if config.normalise:
                     normalised = (model_output - torch.mean(model_output, dim=2, keepdim=True)) / torch.sqrt(
                         torch.var(model_output, dim=2, keepdim=True) + self.eps)
                     lerp = 1 - t / self.timesteps  # effect is small for large t, and large for small t
                     model_output = model_output + lerp * (normalised - model_output)
 
-                if callback is not None:
-                    callback(model_output, ys_pad, t.item())
-
                 ys = scheduler.step(model_output, t, ys).prev_sample
 
-            # Clamp ys to the vocab
-            tokens = clamp_to_vocab(ys, self.embed.weight)
+            tokens = clamp_to_vocab_stochastic(ys)
 
             # Trim parts not in the input
             # Note: it is inefficient to compute KNN for the padding, this could be improved

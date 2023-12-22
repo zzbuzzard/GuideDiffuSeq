@@ -17,6 +17,7 @@ def padding_mask(xs: torch.Tensor, lengths: torch.LongTensor):
     return torch.arange(max_seq_length, device=lengths.device)[None] >= lengths[:, None]
 
 
+# Alternative implementation, currently unused
 def clamp_to_vocab(xs: torch.Tensor, vocab: torch.Tensor):
     assert xs.size(-1) == vocab.size(-1), f"Expected predictions (shape {xs.shape}) and vocabulary (shape {vocab.shape})" \
             "to have matching shape in the final dimension."
@@ -30,10 +31,25 @@ def clamp_to_vocab(xs: torch.Tensor, vocab: torch.Tensor):
     return knn(vocab, xs, k=1)[1]
 
 
+def clamp_to_vocab2(xs: torch.Tensor, vocab: torch.Tensor):
+    assert xs.size(-1) == vocab.size(-1), f"Expected predictions (shape {xs.shape}) and vocabulary (shape {vocab.shape})" \
+            "to have matching shape in the final dimension."
+    return torch.argmin(torch.cdist(xs, vocab), dim=-1)
+
+
+# call clamp_to_vocab without unnecessary padding calculation
+def clamp_to_vocab_nopad(xs: torch.Tensor, xs_pad: torch.BoolTensor, vocab: torch.Tensor):
+    assert xs.size(-1) == vocab.size(-1), f"Expected predictions (shape {xs.shape}) and vocabulary (shape {vocab.shape})" \
+            "to have matching shape in the final dimension."
+    toks = torch.full_like(xs_pad, fill_value=0, dtype=torch.long)
+    toks[~xs_pad] = clamp_to_vocab2(xs[~xs_pad], vocab)
+    return toks
+
+
 def vocab_logits(xs: torch.Tensor, vocab: torch.Tensor):
     """
-    For batch size B and vocab size N, returns the negated B x N distance matrix.
-    This is much slower than clamp_to_vocab above but used for the anchor loss during training.
+    For batch size B and vocab size N, returns the negated B x N distance matrix. A lower distance gives a less negative
+    value and so a higher logit.
     """
     assert xs.size(-1) == vocab.size(-1), f"Expected predictions (shape {xs.shape}) and vocabulary (shape {vocab.shape})" \
             "to have matching shape in the final dimension."
