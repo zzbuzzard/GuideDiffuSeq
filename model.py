@@ -276,8 +276,9 @@ class Model(nn.Module):
                         model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
                         model_output = clamp(model_output, t)
                     elif config.clamp_mode == 4:
-                        model_output_uncond = clamp(model_output_uncond, t)
-                        model_output = model_output_uncond + scale * config.cfg * (model_output - model_output_uncond)
+                        # uc + s * (c - uc) = uc + (c - uc) + (s-1) (c - uc)
+                        #                   = c + (s - 1) (c - uc)
+                        model_output = clamp(model_output, t) + (scale * config.cfg - 1) * (model_output - model_output_uncond)
                     else:
                         raise NotImplementedError(f"Unknown clamp mode: '{config.clamp_mode}'.")
 

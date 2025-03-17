@@ -1,6 +1,7 @@
 wandb
 models
 datasets
+gens
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
